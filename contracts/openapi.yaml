@@ -1,0 +1,151 @@
+openapi: 3.1.0
+info:
+  title: Agent Gateway API
+  version: 0.1.0
+  description: A1 统一认证和健康检查契约；业务端点将在后续阶段加入。
+paths:
+  /health/live:
+    get:
+      operationId: getLiveness
+      summary: 检查应用进程是否可响应
+      tags: [Health]
+      responses:
+        "200":
+          description: 应用进程可响应
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+  /health/ready:
+    get:
+      operationId: getReadiness
+      summary: 检查应用是否可接收依赖数据库的请求
+      description: 执行最小数据库查询；失败响应不包含连接串或底层异常文本。
+      tags: [Health]
+      responses:
+        "200":
+          description: 数据库连接正常
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+        "503":
+          description: 数据库当前不可用
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/auth/login:
+    post:
+      operationId: login
+      summary: 用户登录
+      tags: [Auth]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginRequest"
+      responses:
+        "200":
+          description: 登录成功
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TokenResponse"
+        "401":
+          description: 用户名或密码错误
+  /api/v1/auth/logout:
+    post:
+      operationId: logout
+      summary: 用户退出
+      tags: [Auth]
+      security:
+        - bearerAuth: []
+      responses:
+        "204":
+          description: 当前令牌已撤销
+        "401":
+          description: 令牌无效或缺失
+  /api/v1/auth/me:
+    get:
+      operationId: getCurrentAdmin
+      summary: 获取当前用户
+      tags: [Auth]
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: 当前管理员公开信息
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserResponse"
+        "401":
+          description: 令牌无效或缺失
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  schemas:
+    HealthResponse:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [ok]
+          description: 当前探针状态。
+    ErrorResponse:
+      type: object
+      required: [code, message, request_id]
+      properties:
+        code:
+          type: string
+          example: database_unavailable
+          description: 供调用方稳定判断的错误码。
+        message:
+          type: string
+          description: 可安全展示且不含底层敏感信息的消息。
+        request_id:
+          type: string
+          description: 用于关联服务端日志的请求标识。
+    LoginRequest:
+      type: object
+      required: [username, password]
+      properties:
+        username:
+          type: string
+          minLength: 1
+          maxLength: 100
+        password:
+          type: string
+          format: password
+          minLength: 1
+          maxLength: 256
+    TokenResponse:
+      type: object
+      required: [access_token, token_type, expires_in]
+      properties:
+        access_token:
+          type: string
+        token_type:
+          type: string
+          enum: [bearer]
+        expires_in:
+          type: integer
+          description: 令牌有效期，单位为秒。
+    UserResponse:
+      type: object
+      required: [id, username, role]
+      properties:
+        id:
+          type: string
+          format: uuid
+        username:
+          type: string
+        role:
+          type: string
+          enum: [admin, user]

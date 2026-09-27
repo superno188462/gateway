@@ -1,0 +1,87 @@
+:root {
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  color: #172033;
+  background: #f5f7fb;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; min-width: 320px; min-height: 100vh; }
+button, a { font: inherit; }
+
+.app-shell { display: flex; min-height: 100vh; }
+.app-loading { display: grid; place-items: center; min-height: 100vh; color: #69758c; background: #f5f7fb; font-size: 14px; }
+.login-page { display: grid; place-items: center; min-height: 100vh; padding: 24px; background: radial-gradient(circle at top right, #e7f7f0 0, #f5f7fb 42%, #edf1f8 100%); }
+.login-panel { width: min(100%, 430px); padding: 42px; border: 1px solid #e2e8f0; border-radius: 18px; background: #fff; box-shadow: 0 22px 60px #172b4714; }
+.login-brand { display: flex; align-items: center; gap: 10px; margin-bottom: 52px; color: #172033; font-size: 14px; font-weight: 700; }
+.login-panel h1 { margin-top: 7px; font-size: 30px; }
+.login-description { margin-top: 10px; color: #69758c; font-size: 14px; line-height: 1.6; }
+.login-form { display: grid; gap: 18px; margin-top: 30px; }
+.login-form label { display: grid; gap: 7px; color: #43516a; font-size: 13px; font-weight: 650; }
+.login-form input { width: 100%; padding: 11px 12px; border: 1px solid #d6deea; border-radius: 8px; outline: none; color: #172033; background: #fff; font-size: 14px; }
+.login-form input:focus { border-color: #399b7c; box-shadow: 0 0 0 3px #399b7c1c; }
+.login-button { margin-top: 4px; padding: 12px; border: 0; border-radius: 8px; color: #fff; background: #1b8066; cursor: pointer; font-weight: 700; }
+.login-button:hover { background: #14664f; }
+.login-button:disabled { cursor: wait; opacity: .65; }
+.form-error { padding: 10px 12px; border-radius: 7px; color: #a23f48; background: #fff0f1; font-size: 13px; }
+.login-note { margin-top: 26px; color: #8a98aa; font-size: 11px; line-height: 1.6; }
+.sidebar { width: 250px; padding: 26px 18px 20px; background: #101a31; color: #c9d2e4; display: flex; flex-direction: column; }
+.brand { display: flex; align-items: center; gap: 11px; padding: 0 11px 34px; color: #fff; }
+.brand-mark { display: grid; place-items: center; width: 34px; height: 34px; border-radius: 10px; color: #10203a; background: #8be1c2; font-size: 12px; font-weight: 800; }
+.brand strong, .brand span { display: block; }
+.brand strong { font-size: 14px; letter-spacing: .01em; }
+.brand div span { margin-top: 3px; color: #8290ab; font-size: 11px; }
+.nav-list { display: grid; gap: 6px; }
+.nav-item { display: flex; justify-content: space-between; align-items: center; padding: 11px 12px; border-radius: 9px; color: #aeb9cf; text-decoration: none; font-size: 14px; }
+.nav-item:hover, .nav-item-active { color: #fff; background: #1d2b49; }
+.nav-item-disabled { color: #66738b; cursor: default; }
+.nav-item-disabled small { font-size: 10px; color: #56647d; }
+.sidebar-footer { display: flex; align-items: center; gap: 8px; margin-top: auto; padding: 13px 12px 0; color: #7f8da5; font-size: 11px; border-top: 1px solid #23304a; }
+.status-dot { width: 7px; height: 7px; border-radius: 50%; background: #70d6ac; }
+.main-content { flex: 1; min-width: 0; }
+.topbar { display: flex; justify-content: space-between; align-items: center; padding: 30px 54px 24px; border-bottom: 1px solid #e6eaf2; background: #fff; }
+.eyebrow, .page-kicker { color: #73809a; font-size: 11px; letter-spacing: .08em; text-transform: uppercase; }
+.eyebrow { display: block; margin-bottom: 6px; }
+h1, h2, h3, p { margin: 0; }
+h1 { font-size: 22px; letter-spacing: -.02em; }
+.stage-badge { padding: 7px 10px; border: 1px solid #dce8e4; border-radius: 999px; color: #267b62; background: #f0fbf7; font-size: 12px; }
+.account-area { display: flex; align-items: center; gap: 12px; }
+.user-badge { color: #65738b; font-size: 12px; }
+.logout-button { padding: 7px 10px; border: 1px solid #d8e0eb; border-radius: 7px; color: #52627b; background: #fff; cursor: pointer; font-size: 12px; }
+.logout-button:hover { border-color: #b9c7d9; color: #1b8066; }
+.page-content { max-width: 980px; padding: 48px 54px; }
+.intro-row { display: flex; justify-content: space-between; align-items: end; gap: 20px; }
+.page-kicker { margin-bottom: 10px; color: #4c9a7d; }
+h2 { font-size: 28px; letter-spacing: -.03em; }
+.page-description { margin-top: 10px; color: #69758c; font-size: 14px; }
+.primary-button { padding: 10px 16px; border: 0; border-radius: 8px; color: #fff; background: #1b8066; cursor: pointer; font-weight: 650; }
+.primary-button:hover { background: #14664f; }
+.health-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; margin-top: 34px; }
+.health-card { padding: 22px; border: 1px solid #e3e8f0; border-radius: 13px; background: #fff; box-shadow: 0 8px 24px #192b4710; }
+.health-card-heading { display: flex; align-items: center; gap: 12px; }
+.health-icon { display: grid; place-items: center; width: 30px; height: 30px; border-radius: 8px; color: #8b6b29; background: #fff5d9; font-weight: 800; }
+.health-icon-ok { color: #187c5b; background: #def8ed; }
+.health-card h3 { font-size: 15px; }
+.health-endpoint { display: block; margin-top: 4px; color: #8994a8; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 11px; }
+.health-value { margin-top: 24px; color: #1a765a; font-size: 24px; font-weight: 700; }
+.health-card-loading .health-value, .health-card-idle .health-value { color: #77849a; }
+.health-card-error .health-value { color: #b34d4d; }
+.health-error { margin-top: 8px; color: #b34d4d; font-size: 12px; }
+.verification-note { display: flex; gap: 12px; margin-top: 30px; padding: 17px 19px; border: 1px solid #dfe9f7; border-radius: 11px; color: #586980; background: #f8fbff; }
+.note-icon { display: grid; flex: 0 0 auto; place-items: center; width: 20px; height: 20px; border-radius: 50%; color: #3c6fa6; background: #e3effd; font-size: 12px; font-weight: 700; }
+.verification-note strong { color: #2c4668; font-size: 13px; }
+.verification-note p { margin-top: 5px; font-size: 13px; line-height: 1.6; }
+.verification-note small { display: block; margin-top: 7px; color: #8a98aa; font-size: 11px; }
+
+@media (max-width: 760px) {
+  .sidebar { width: 74px; padding: 20px 10px; }
+  .brand { justify-content: center; padding: 0 0 30px; }
+  .brand div, .nav-item span, .nav-item small, .sidebar-footer { display: none; }
+  .nav-item { justify-content: center; }
+  .topbar, .page-content { padding-left: 24px; padding-right: 24px; }
+  .health-grid { grid-template-columns: 1fr; }
+  .login-panel { padding: 30px 24px; }
+  .login-brand { margin-bottom: 38px; }
+  .user-badge { display: none; }
+}

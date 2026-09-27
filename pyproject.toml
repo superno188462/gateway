@@ -1,0 +1,8 @@
+[project]
+name = "postgres-connection-test"
+version = "0.1.0"
+description = "PostgreSQL 连接测试脚本"
+requires-python = ">=3.10"
+dependencies = [
+    "psycopg[binary]>=3.2,<4",
+]
