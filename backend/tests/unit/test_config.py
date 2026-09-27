@@ -8,14 +8,16 @@ from app.config import Settings
 
 def test_accepts_async_postgresql_url() -> None:
     settings = Settings(
-        database_url="postgresql+asyncpg://user:pass@localhost/db", jwt_secret_key="x" * 32
+        database_url="postgresql+asyncpg://user:pass@localhost/db",
+        jwt_secret_key="x" * 32,
+        _env_file=None,
     )
     assert settings.database_url.startswith("postgresql+asyncpg://")
 
 
 def test_rejects_sync_or_non_postgresql_url() -> None:
     with pytest.raises(ValidationError):
-        Settings(database_url="sqlite:///gateway.db", jwt_secret_key="x" * 32)
+        Settings(database_url="sqlite:///gateway.db", jwt_secret_key="x" * 32, _env_file=None)
 
 
 def test_normalizes_log_level() -> None:
@@ -24,6 +26,7 @@ def test_normalizes_log_level() -> None:
             database_url="postgresql+asyncpg://user:pass@localhost/db",
             log_level="warning",
             jwt_secret_key="x" * 32,
+            _env_file=None,
         ).log_level
         == "WARNING"
     )
@@ -35,6 +38,7 @@ def test_admin_credentials_must_be_configured_together() -> None:
             database_url="postgresql+asyncpg://user:pass@localhost/db",
             jwt_secret_key="x" * 32,
             admin_username="admin",
+            _env_file=None,
         )
 
 
@@ -45,4 +49,5 @@ def test_admin_password_requires_minimum_length() -> None:
             jwt_secret_key="x" * 32,
             admin_username="admin",
             admin_password="short",
+            _env_file=None,
         )

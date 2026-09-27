@@ -4,9 +4,9 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Response, status
 from fastapi.security import HTTPAuthorizationCredentials
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
-from app.application.auth import AuthService
+from app.application.auth import AuthService, RegistrationConflictError
 from app.container import bearer_scheme, get_auth_service, get_current_user
 from app.infrastructure.db.models import User
 
@@ -18,6 +18,21 @@ class LoginRequest(BaseModel):
 
     username: str = Field(min_length=1, max_length=100)
     password: str = Field(min_length=1, max_length=256)
+
+
+class RegisterRequest(BaseModel):
+    """普通用户注册请求。"""
+
+    username: str = Field(min_length=3, max_length=100)
+    password: str = Field(min_length=8, max_length=256)
+
+    @field_validator("username")
+    @classmethod
+    def normalize_username(cls, value: str) -> str:
+        normalized = value.strip()
+        if len(normalized) < 3:
+            raise ValueError("用户名去除空格后至少需要 3 个字符")
+        return normalized
 
 
 class TokenResponse(BaseModel):
@@ -34,6 +49,30 @@ class UserResponse(BaseModel):
     id: str
     username: str
     role: str
+
+
+@router.post(
+    "/register",
+    response_model=UserResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="注册普通用户",
+    responses={409: {"description": "用户名已存在"}},
+)
+async def register(
+    payload: RegisterRequest,
+    auth_service: Annotated[AuthService, Depends(get_auth_service)],
+) -> UserResponse:
+    """创建普通用户，注册接口不会创建管理员。"""
+    try:
+        user = await auth_service.register(payload.username.strip(), payload.password)
+    except RegistrationConflictError as error:
+        from fastapi import HTTPException
+
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"code": "username_taken", "message": str(error)},
+        ) from error
+    return UserResponse(id=str(user.id), username=user.username, role=user.role)
 
 
 @router.post("/login", response_model=TokenResponse, summary="用户登录")

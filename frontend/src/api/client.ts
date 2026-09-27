@@ -7,6 +7,8 @@ export type LoginRequest = {
   password: string;
 };
 
+export type RegisterRequest = LoginRequest;
+
 export type TokenResponse = {
   access_token: string;
   token_type: "bearer";
@@ -68,6 +70,11 @@ export const apiClient = {
   getReadiness: () => request<HealthResponse>("/health/ready"),
   login: (payload: LoginRequest) =>
     request<TokenResponse>("/v1/auth/login", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  register: (payload: RegisterRequest) =>
+    request<UserResponse>("/v1/auth/register", {
       method: "POST",
       body: JSON.stringify(payload),
     }),

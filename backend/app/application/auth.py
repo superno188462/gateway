@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 import jwt
 from fastapi import HTTPException, status
 from sqlalchemy import select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.infrastructure.db.models import AuthSession, User
@@ -13,6 +14,10 @@ from app.security import JwtService, PasswordService
 
 class AdminBootstrapError(RuntimeError):
     """管理员引导状态不满足启动要求。"""
+
+
+class RegistrationConflictError(RuntimeError):
+    """注册用户名已经存在。"""
 
 
 class AdminBootstrapService:
@@ -85,6 +90,24 @@ class AuthService:
             token, jti, expires_at = self._jwt_service.issue(str(user.id), user.role)
             session.add(AuthSession(jti=jti, user_id=user.id, expires_at=expires_at))
         return token, self._jwt_service.expires_minutes * 60
+
+    async def register(self, username: str, password: str) -> User:
+        """创建普通用户；注册永远不会创建管理员。"""
+        try:
+            async with self._session_factory.begin() as session:
+                result = await session.execute(select(User).where(User.username == username))
+                if result.scalar_one_or_none() is not None:
+                    raise RegistrationConflictError("用户名已存在")
+                user = User(
+                    username=username,
+                    password_hash=self._password_service.hash(password),
+                    role="user",
+                )
+                session.add(user)
+                await session.flush()
+                return user
+        except IntegrityError as error:
+            raise RegistrationConflictError("用户名已存在") from error
 
     async def require_user(self, token: str) -> User:
         try:

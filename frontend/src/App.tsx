@@ -3,6 +3,7 @@ import { AuthProvider } from "./auth/AuthProvider";
 import { useAuth } from "./auth/useAuth";
 import { HealthPage } from "./pages/HealthPage";
 import { LoginPage } from "./pages/LoginPage";
+import { RegisterPage } from "./pages/RegisterPage";
 
 const navigation = [
   { label: "运行状态", to: "/" },
@@ -74,6 +75,7 @@ export default function App() {
     <AuthProvider>
       <Routes>
         <Route element={<LoginPage />} path="/login" />
+        <Route element={<RegisterPage />} path="/register" />
         <Route element={<ProtectedApp />} path="/*" />
       </Routes>
     </AuthProvider>

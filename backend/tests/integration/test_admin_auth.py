@@ -51,6 +51,7 @@ async def test_admin_bootstrap_and_login_logout_flow() -> None:
         settings = Settings(
             database_url=database_url(),
             jwt_secret_key="a" * 32,
+            _env_file=None,
         )
         app = create_app(settings=settings)
         async with app.router.lifespan_context(app):
@@ -86,6 +87,17 @@ async def test_admin_bootstrap_and_login_logout_flow() -> None:
                     headers={"Authorization": f"Bearer {user_login.json()['access_token']}"},
                 )
                 assert user_me.json()["role"] == "user"
+                registered = await client.post(
+                    "/api/v1/auth/register",
+                    json={"username": "registered-user", "password": "register-password"},
+                )
+                assert registered.status_code == 201
+                assert registered.json()["role"] == "user"
+                duplicate = await client.post(
+                    "/api/v1/auth/register",
+                    json={"username": "registered-user", "password": "register-password"},
+                )
+                assert duplicate.status_code == 409
 
                 logout = await client.post(
                     "/api/v1/auth/logout",

@@ -25,6 +25,9 @@ button, a { font: inherit; }
 .login-button:hover { background: #14664f; }
 .login-button:disabled { cursor: wait; opacity: .65; }
 .form-error { padding: 10px 12px; border-radius: 7px; color: #a23f48; background: #fff0f1; font-size: 13px; }
+.form-success { margin-top: 18px; padding: 10px 12px; border-radius: 7px; color: #1b7659; background: #edfbf5; font-size: 13px; }
+.login-note a { color: #1b8066; font-weight: 650; text-decoration: none; }
+.login-note a:hover { text-decoration: underline; }
 .login-note { margin-top: 26px; color: #8a98aa; font-size: 11px; line-height: 1.6; }
 .sidebar { width: 250px; padding: 26px 18px 20px; background: #101a31; color: #c9d2e4; display: flex; flex-direction: column; }
 .brand { display: flex; align-items: center; gap: 11px; padding: 0 11px 34px; color: #fff; }
