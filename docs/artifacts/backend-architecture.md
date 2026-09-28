@@ -45,7 +45,7 @@ B0 不创建业务实体。数据库只产生 Alembic 自己的 `alembic_version
 | 阶段 | 模型 |
 |---|---|
 | A1 | `users`，包含唯一管理员约束与密码哈希 |
-| A2 | `projects` 及用户/项目关系 |
+| A2 | `projects`（含 `public/private` 可见性）、`project_members`、`project_tags`；公开访问按规则授予只读权限，管理员默认 review 全部项目，owner 管理项目与最多 5 个自定义标签 |
 | A3 | `api_keys`，只保存摘要、前缀和末四位 |
 | A4 | `gateway_requests`、`usage_records`、可空的 `cost_records` |
 | A5 | 查询索引、审计事件和日志保留任务状态 |

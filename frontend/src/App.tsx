@@ -1,10 +1,12 @@
-import { NavLink, Navigate, Route, Routes } from "react-router-dom";
+import { NavLink, Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { AuthProvider } from "./auth/AuthProvider";
 import { useAuth } from "./auth/useAuth";
 import { HealthPage } from "./pages/HealthPage";
 import { LoginPage } from "./pages/LoginPage";
 import { RegisterPage } from "./pages/RegisterPage";
 import { ProjectsPage } from "./pages/ProjectsPage";
+import { ProjectDetailPage } from "./pages/ProjectDetailPage";
+import { ProjectCreatePage } from "./pages/ProjectCreatePage";
 
 const navigation = [
   { label: "运行状态", to: "/" },
@@ -14,6 +16,14 @@ const navigation = [
 
 function AppShell() {
   const { user, isLoading, logout } = useAuth();
+  const location = useLocation();
+  const pageTitle = location.pathname === "/projects/new"
+    ? "创建项目"
+    : location.pathname.startsWith("/projects/")
+      ? "项目详情"
+      : location.pathname === "/projects"
+        ? "项目"
+        : "运行状态";
   if (isLoading) return <div className="app-loading">正在恢复登录状态…</div>;
 
   return (
@@ -53,7 +63,7 @@ function AppShell() {
         <header className="topbar">
           <div>
             <span className="eyebrow">平台概览</span>
-            <h1>运行状态</h1>
+            <h1>{pageTitle}</h1>
           </div>
           <div className="account-area">
             <span className="user-badge">{user?.username} · {user?.role}</span>
@@ -65,6 +75,8 @@ function AppShell() {
         <Routes>
           <Route element={<HealthPage />} path="/" />
           <Route element={<ProjectsPage />} path="/projects" />
+          <Route element={<ProjectCreatePage />} path="/projects/new" />
+          <Route element={<ProjectDetailPage />} path="/projects/:projectId" />
           <Route element={<Navigate replace to="/" />} path="*" />
         </Routes>
       </main>

@@ -2,7 +2,7 @@ openapi: 3.1.0
 info:
   title: Agent Gateway API
   version: 0.1.0
-  description: A1 统一认证和健康检查契约；业务端点将在后续阶段加入。
+  description: 统一认证、项目管理、成员授权和健康检查接口契约。
 paths:
   /health/live:
     get:
@@ -107,6 +107,7 @@ paths:
     post:
       operationId: create_project
       summary: 创建项目
+      description: 任何已认证用户均可创建；创建者成为 owner，默认项目为私有。
       tags: [Projects]
       security:
         - bearerAuth: []
@@ -126,24 +127,57 @@ paths:
     get:
       operationId: list_projects
       summary: 查询可访问项目
+      description: 管理员可 review 所有项目；普通用户可查看公开项目及私有成员项目。
       tags: [Projects]
       security:
         - bearerAuth: []
+      parameters:
+        - in: query
+          name: query
+          schema: { type: string, maxLength: 100 }
+          description: 按项目名称或描述模糊搜索。
+        - in: query
+          name: tag
+          schema: { type: string, minLength: 1, maxLength: 20 }
+          description: 精确匹配一个标签。
+        - in: query
+          name: status
+          schema: { type: string, enum: [active, inactive] }
+        - in: query
+          name: offset
+          schema: { type: integer, minimum: 0, default: 0 }
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
       responses:
         "200":
           description: 项目列表
           content:
             application/json:
               schema:
+                $ref: "#/components/schemas/ProjectListResponse"
+  /api/admin/v1/projects/tags:
+    get:
+      operationId: list_project_tags
+      summary: 查询可见项目的标签建议
+      tags: [Projects]
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: 标签列表
+          content:
+            application/json:
+              schema:
                 type: array
-                items:
-                  $ref: "#/components/schemas/ProjectResponse"
+                items: { type: string }
   /api/admin/v1/projects/{project_id}:
     parameters:
       - $ref: "#/components/parameters/ProjectId"
     get:
       operationId: get_project
       summary: 查看项目
+      description: 管理员可 review 所有项目；公开项目对所有已认证用户可读，私有项目仅对成员可读。
       tags: [Projects]
       security:
         - bearerAuth: []
@@ -157,6 +191,7 @@ paths:
     patch:
       operationId: update_project
       summary: 更新项目
+      description: 仅项目 owner 可以更新；管理员的跨项目权限为只读 review。
       tags: [Projects]
       security:
         - bearerAuth: []
@@ -173,6 +208,20 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ProjectResponse"
+    delete:
+      operationId: delete_project
+      summary: 删除项目
+      description: 仅项目 owner 可以永久删除；标签和成员关系会随项目一并删除。
+      tags: [Projects]
+      security:
+        - bearerAuth: []
+      responses:
+        "204":
+          description: 删除成功
+        "403":
+          description: 当前用户不是项目 owner
+        "404":
+          description: 项目不存在
   /api/admin/v1/projects/{project_id}/members:
     parameters:
       - $ref: "#/components/parameters/ProjectId"
@@ -228,6 +277,25 @@ paths:
       responses:
         "204":
           description: 移除成功
+    patch:
+      operationId: update_project_member_role
+      summary: 修改项目成员角色
+      tags: [Projects]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProjectMemberRoleUpdateRequest"
+      responses:
+        "200":
+          description: 角色修改成功
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProjectMemberResponse"
 components:
   parameters:
     ProjectId:
@@ -324,8 +392,19 @@ components:
           minLength: 1
           maxLength: 100
         description:
-          type: string
+          type: [string, 'null']
           maxLength: 2000
+        visibility:
+          type: string
+          enum: [public, private]
+          default: private
+          description: 项目可见范围，默认私有。
+        tags:
+          type: array
+          maxItems: 5
+          uniqueItems: true
+          description: 自定义标签；服务端会去空格、转小写并去重，每项最多 20 个字符。
+          items: { type: string, minLength: 1, maxLength: 20 }
     ProjectUpdateRequest:
       type: object
       properties:
@@ -334,14 +413,38 @@ components:
           minLength: 1
           maxLength: 100
         description:
-          type: string
+          type: [string, 'null']
           maxLength: 2000
         status:
-          type: string
-          enum: [active, inactive]
+          anyOf:
+            - type: string
+              enum: [active, inactive]
+            - type: 'null'
+        visibility:
+          anyOf:
+            - type: string
+              enum: [public, private]
+            - type: 'null'
+          description: 项目可见范围；仅 owner 可修改。
+        tags:
+          type: array
+          maxItems: 5
+          uniqueItems: true
+          description: 更新项目标签；传空数组可清空。
+          items: { type: string, minLength: 1, maxLength: 20 }
+    ProjectListResponse:
+      type: object
+      required: [items, total, offset, limit]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/ProjectResponse" }
+        total: { type: integer }
+        offset: { type: integer }
+        limit: { type: integer }
     ProjectResponse:
       type: object
-      required: [id, name, description, status, owner_id, created_at, updated_at]
+      required: [id, name, description, status, visibility, tags, owner_id, created_at, updated_at]
       properties:
         id:
           type: string
@@ -353,6 +456,13 @@ components:
         status:
           type: string
           enum: [active, inactive]
+        visibility:
+          type: string
+          enum: [public, private]
+          description: public 对所有已认证用户只读开放；private 仅对 owner、成员及管理员可查看。
+        tags:
+          type: array
+          items: { type: string }
         owner_id:
           type: string
           format: uuid
@@ -364,17 +474,25 @@ components:
           format: date-time
     ProjectMemberRequest:
       type: object
-      required: [user_id, role]
+      required: [role]
+      description: user_id 和 username 必须且只能提供一个，用于唯一定位目标用户。
       properties:
         user_id:
-          type: string
+          type: [string, 'null']
           format: uuid
+          description: 用户 UUID；与 username 二选一。
+        username:
+          type: [string, 'null']
+          minLength: 3
+          maxLength: 100
+          description: 唯一用户名；与 user_id 二选一。
         role:
           type: string
           enum: [editor, viewer]
+          description: 加入项目后的成员角色。
     ProjectMemberResponse:
       type: object
-      required: [project_id, user_id, role, created_at, updated_at]
+      required: [project_id, user_id, username, role, created_at, updated_at]
       properties:
         project_id:
           type: string
@@ -382,6 +500,10 @@ components:
         user_id:
           type: string
           format: uuid
+          description: 成员用户 UUID，可用于后续成员操作。
+        username:
+          type: string
+          description: 成员唯一用户名。
         role:
           type: string
           enum: [owner, editor, viewer]
@@ -391,3 +513,11 @@ components:
         updated_at:
           type: string
           format: date-time
+    ProjectMemberRoleUpdateRequest:
+      type: object
+      required: [role]
+      properties:
+        role:
+          type: string
+          enum: [editor, viewer]
+          description: 成员的新角色；owner 角色不能通过此接口变更。

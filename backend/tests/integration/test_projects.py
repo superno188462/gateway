@@ -53,10 +53,11 @@ async def test_project_membership_filters_and_authorizes() -> None:
                 created = await client.post(
                     "/api/admin/v1/projects",
                     headers=admin_headers,
-                    json={"name": "Demo Project", "description": "A2"},
+                    json={"name": "Demo Project", "description": "A2", "tags": ["Agents", "dev"]},
                 )
                 assert created.status_code == 201
                 project_id = created.json()["id"]
+                assert created.json()["tags"] == ["agents", "dev"]
 
                 registered = await client.post(
                     "/api/v1/auth/register",
@@ -79,14 +80,21 @@ async def test_project_membership_filters_and_authorizes() -> None:
                 user_headers = {"Authorization": f"Bearer {user_login.json()['access_token']}"}
                 visible = await client.get("/api/admin/v1/projects", headers=user_headers)
                 assert visible.status_code == 200
-                assert [item["id"] for item in visible.json()] == [project_id]
-
-                forbidden_create = await client.post(
+                assert [item["id"] for item in visible.json()["items"]] == [project_id]
+                assert visible.json()["total"] == 1
+                filtered = await client.get(
+                    "/api/admin/v1/projects?tag=agents&query=Demo&limit=1",
+                    headers=user_headers,
+                )
+                assert [item["id"] for item in filtered.json()["items"]] == [project_id]
+                assert await client.get("/api/admin/v1/projects/tags", headers=user_headers)
+                own_project = await client.post(
                     "/api/admin/v1/projects",
                     headers=user_headers,
-                    json={"name": "Forbidden"},
+                    json={"name": "User Project", "tags": []},
                 )
-                assert forbidden_create.status_code == 403
+                assert own_project.status_code == 201
+                own_project_id = own_project.json()["id"]
 
                 forbidden_update = await client.patch(
                     f"/api/admin/v1/projects/{project_id}",
@@ -94,10 +102,23 @@ async def test_project_membership_filters_and_authorizes() -> None:
                     json={"name": "Changed"},
                 )
                 assert forbidden_update.status_code == 403
+                admin_delete_forbidden = await client.delete(
+                    f"/api/admin/v1/projects/{own_project_id}", headers=admin_headers
+                )
+                assert admin_delete_forbidden.status_code == 403
+                deleted = await client.delete(
+                    f"/api/admin/v1/projects/{own_project_id}", headers=user_headers
+                )
+                assert deleted.status_code == 204
+                assert (
+                    await client.get(
+                        f"/api/admin/v1/projects/{own_project_id}", headers=user_headers
+                    )
+                ).status_code == 404
 
                 admin_visible = await client.get("/api/admin/v1/projects", headers=admin_headers)
                 assert admin_visible.status_code == 200
-                assert len(admin_visible.json()) == 1
+                assert admin_visible.json()["total"] == 1
                 assert UUID(project_id)
     finally:
         await engine.dispose()

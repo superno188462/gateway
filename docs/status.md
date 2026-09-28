@@ -8,7 +8,7 @@
 | B0 | FastAPI、配置、PostgreSQL、Alembic、健康检查、质量工具 | 启动、迁移、测试和检查 | 已完成 |
 | F0 | React 基础、路由、布局、类型安全 API Client | 能访问健康检查 | 已完成 |
 | A1 | 统一登录、角色、JWT | 四种启动分支和登录流程 | 已完成 |
-| A2 | 项目管理 | CRUD、项目成员权限和隔离 | 已完成（集成复跑待本地数据库） |
+| A2 | 项目管理 | CRUD、项目成员权限、标签检索和分页 | 功能已完成；隔离 PostgreSQL 集成验收待执行 |
 | A3 | API Key | 单次明文、哈希存储、撤销 | 未开始 |
 | A4 | Mock 网关 | Key 调用、token 和请求记录 | 未开始 |
 | A5 | 日志与用量 | 筛选、分页、汇总一致 | 未开始 |
@@ -17,7 +17,7 @@
 
 ## 当前阶段
 
-- 当前：P0、B0、F0、A1 与 A2 已完成，等待进入 A3 API Key。
+- 当前：A2 功能已实现；待在隔离 PostgreSQL 上执行 0005/0006 迁移并完成集成验收，再进入 A3。
 - 本轮不包含：API Key、Mock 模型接口、日志用量、模板记忆和公网部署。
 - 运行约定：后端 `uv run python main.py`；前端在 F0 后使用 `npm run dev`；运行时数据库使用服务器 PostgreSQL。Docker 仅用于后续服务器部署。
 - DI 约定：`AppContainer` 注册配置、数据库引擎和基础设施服务单例；路由通过 FastAPI `Depends` 获取，不自行创建服务。
@@ -87,14 +87,21 @@
 ## A2 验证记录
 
 - 新增 `projects`、`project_members` 数据模型及 `20260928_0004_projects` Alembic 迁移。
-- 管理员可以创建、查询和更新项目；创建项目时自动成为 `owner`。
-- 普通用户只能查询 `project_members` 中授权的项目；无成员关系的项目不会出现在列表中。
-- 项目成员支持 `owner`、`editor`、`viewer` 角色；只有管理员或 owner 可以添加、移除成员，不能移除 owner。
-- 普通用户不能创建项目或修改不属于自己的项目，越权返回 `403`。
+- 新增 `project_tags` 标签关系表及 `20260928_0006_project_tags` 迁移；项目最多 5 个自定义标签，每个最多 20 字符，服务端统一去空格、转小写和去重。
+- 所有已登录用户均可创建项目，创建者自动成为 `owner`；管理员可 review 所有项目。
+- 项目支持 `public` / `private`：普通用户可查看所有公开项目和显式加入的私有项目；公开访问授予只读 review，不产生每用户成员行。
+- 私有项目由成员关系控制查看；只有项目 owner 可以更新项目或管理成员，管理员全局角色只提供 review。
+- 项目成员支持 `owner`、`editor`、`viewer` 角色；不能通过成员接口新增、修改或移除 owner。
 - 新增项目 API：项目 CRUD、成员查询、添加成员、移除成员。
-- 新增前端 `/projects`：项目列表、管理员创建项目、启用/停用项目、普通用户项目过滤。
-- PostgreSQL 集成测试代码已覆盖管理员建项目、成员授权、列表隔离和越权保护；本轮修复了测试间项目数据清理顺序。由于本机 Docker Desktop 引擎未启动，修复后的隔离 PostgreSQL 集成测试尚未重新执行，不连接生产数据库。
-- `npm run typecheck`、`npm run lint`、`npm run build`：全部通过。
+- 新增前端 `/projects` 项目列表和 `/projects/:projectId` 独立详情页：所有登录用户可创建 public/private 项目；owner 在详情页编辑项目和成员权限；管理员和公开项目的所有用户只读 review。
+- 项目列表支持名称/描述关键词、标签、状态筛选及服务端分页；标签候选仅来自当前用户可见项目，owner 可在创建和项目设置中维护标签。
+- 仅项目 owner 可永久删除项目；API 返回 204，删除前端二次确认，标签和成员关系随项目清理。真实 PostgreSQL 删除集成测试待隔离数据库环境执行。
+- 项目列表和详情页依据 `owner_id` 显示“我创建的”或“他人项目”，让用户能区分自己的项目与公开 review 项目。
+- 成员 API 的添加请求支持 `user_id` 或唯一 `username` 二选一；成员列表和添加响应均返回用户 ID 与用户名，支持修改非 owner 成员角色，项目描述支持通过 PATCH 置空。
+- 迁移 `20260928_0005_project_visibility` 为既有项目设置默认 `private`；`0005`、`0006` 尚未执行，本轮不连接生产数据库。
+- `uv run pytest -m "not integration"`：10 项通过；PostgreSQL 集成测试未执行。
+- `uv run ruff check .`、`uv run ruff format --check .`、`uv run mypy app tests main.py`：通过。
+- `npm run typecheck`、`npm run lint`、`npm run build`：通过。
 
 ### 验证环境说明
 
@@ -105,4 +112,4 @@
 
 ## 下一步
 
-B0、F0、A1 与 A2 已完成。下一步进入 A3，实现 API Key 创建、哈希、列表和撤销。
+在隔离 PostgreSQL 上依次执行 0005、0006 迁移，验证公开/私有项目、标签增删/筛选/分页及管理员只读权限；完成验收后再进入 A3。
