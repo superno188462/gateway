@@ -296,6 +296,67 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ProjectMemberResponse"
+  /api/admin/v1/projects/{project_id}/keys:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+    get:
+      operationId: list_api_keys
+      summary: 查询项目 API Key
+      description: owner 和 editor 可查询完整 Key；数据库保存加密密文，响应不返回摘要。
+      tags: [API Keys]
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Key 元数据列表
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/ApiKeyResponse" }
+        "403": { description: 当前用户不是项目 owner }
+        "404": { description: 项目不存在 }
+        "503": { description: 未配置 API_KEY_SECRET_KEY }
+    post:
+      operationId: create_api_key
+      summary: 创建项目 API Key
+      description: 仅项目 owner 可创建；每个 Key 默认具有整个项目的调用权限。
+      tags: [API Keys]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ApiKeyCreateRequest" }
+      responses:
+        "201":
+          description: 已创建；请立即安全保存 secret。
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiKeyCreatedResponse" }
+        "403": { description: 当前用户不是项目 owner }
+        "404": { description: 项目不存在 }
+        "422": { description: Key 名称或有效期无效 }
+        "503": { description: 未配置 API_KEY_SECRET_KEY }
+  /api/admin/v1/projects/{project_id}/keys/{key_id}:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+      - name: key_id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    delete:
+      operationId: revoke_api_key
+      summary: 撤销项目 API Key
+      tags: [API Keys]
+      security:
+        - bearerAuth: []
+      responses:
+        "204": { description: 已撤销 }
+        "403": { description: 当前用户不是项目 owner }
+        "404": { description: 项目或 Key 不存在 }
+        "503": { description: 未配置 API_KEY_SECRET_KEY }
 components:
   parameters:
     ProjectId:
@@ -521,3 +582,42 @@ components:
           type: string
           enum: [editor, viewer]
           description: 成员的新角色；owner 角色不能通过此接口变更。
+    ApiKeyCreateRequest:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+        expires_at:
+          type: [string, 'null']
+          format: date-time
+          description: 省略或 null 表示永不过期。
+    ApiKeyResponse:
+      type: object
+      required: [id, project_id, name, key_prefix, key_last_four, secret, status, expires_at, last_used_at, revoked_at, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        project_id: { type: string, format: uuid }
+        name: { type: string }
+        key_prefix: { type: string, description: 用于检索和识别的 Key 前缀。 }
+        key_last_four: { type: string, minLength: 4, maxLength: 4 }
+        secret:
+          type: [string, 'null']
+          description: owner/editor 可见的完整 Key；旧版无法恢复的密钥为 null。
+        status: { type: string, enum: [active, revoked, expired] }
+        expires_at: { type: [string, 'null'], format: date-time }
+        last_used_at: { type: [string, 'null'], format: date-time }
+        revoked_at: { type: [string, 'null'], format: date-time }
+        created_at: { type: string, format: date-time }
+    ApiKeyCreatedResponse:
+      allOf:
+        - $ref: "#/components/schemas/ApiKeyResponse"
+        - type: object
+          required: [secret]
+          properties:
+            secret:
+              type: string
+              writeOnly: true
+              description: 完整 Key；owner/editor 可随时查看，数据库只保存加密密文。

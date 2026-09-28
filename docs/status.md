@@ -9,7 +9,7 @@
 | F0 | React 基础、路由、布局、类型安全 API Client | 能访问健康检查 | 已完成 |
 | A1 | 统一登录、角色、JWT | 四种启动分支和登录流程 | 已完成 |
 | A2 | 项目管理 | CRUD、项目成员权限、标签检索和分页 | 功能已完成；隔离 PostgreSQL 集成验收待执行 |
-| A3 | API Key | 单次明文、哈希存储、撤销 | 未开始 |
+| A3 | API Key | owner/editor 可查看明文、加密存储、撤销 | 已完成 |
 | A4 | Mock 网关 | Key 调用、token 和请求记录 | 未开始 |
 | A5 | 日志与用量 | 筛选、分页、汇总一致 | 未开始 |
 | A6 | 模板与记忆 | 固定目录、文件 CRUD、并发冲突 | 未开始 |
@@ -17,8 +17,8 @@
 
 ## 当前阶段
 
-- 当前：A2 功能已实现；待在隔离 PostgreSQL 上执行 0005/0006 迁移并完成集成验收，再进入 A3。
-- 本轮不包含：API Key、Mock 模型接口、日志用量、模板记忆和公网部署。
+- 当前：A3 后端和前端已完成；下一阶段进入 A4 Mock 网关。
+- 本轮不包含：Mock 模型接口、日志用量、模板记忆和公网部署。
 - 运行约定：后端 `uv run python main.py`；前端在 F0 后使用 `npm run dev`；运行时数据库使用服务器 PostgreSQL。Docker 仅用于后续服务器部署。
 - DI 约定：`AppContainer` 注册配置、数据库引擎和基础设施服务单例；路由通过 FastAPI `Depends` 获取，不自行创建服务。
 
@@ -103,6 +103,22 @@
 - `uv run ruff check .`、`uv run ruff format --check .`、`uv run mypy app tests main.py`：通过。
 - `npm run typecheck`、`npm run lint`、`npm run build`：通过。
 
+## A3 后端验证记录
+
+- 新增 `api_keys` 表和 `20260928_0007_api_keys` Alembic 迁移；外键关联项目并级联清理，摘要和前缀唯一，状态仅允许 active/revoked。
+- 一个项目可创建多把项目级 Key；每把 Key 默认授权整个项目。项目 owner/editor 可查看脱敏 Key 元数据；只有 owner 可创建和撤销，管理员全局 review 权限不包含 Key 访问权。
+- Key 使用 `agw_` 前缀和密码学安全随机值生成；数据库保存 HMAC-SHA256 摘要及 Fernet 密文，运行时绝不将明文写入数据库。owner/editor 列表可随时查看完整 Key；API 不返回摘要。
+- 新增项目 Key 的创建、列表、撤销接口及内部校验服务。校验会拒绝无效、撤销、过期 Key，并更新 `last_used_at`；撤销操作幂等。
+- `API_KEY_SECRET_KEY` 可选以保持现有部署可启动；未配置时 Key 管理接口返回 503，不使用默认值签发 Key。至少 32 个字符，需稳定备份；轮换会使已签发 Key 无法解密或验证。
+- 已在 `.env` 配置的 `119.45.48.180:5432/mydb` 执行 `uv run alembic upgrade head`，版本先到 `20260928_0007`；本次新增 `20260928_0008`，增加密文列并撤销无法恢复的旧 Key。
+- `uv run pytest tests/integration/test_api_keys.py -m integration -q`：通过；覆盖创建、owner/editor 随时可查看完整 Key、数据库只保存密文和摘要、仅 owner 可操作、有效 Key 校验、撤销及撤销后拒绝。测试仅清理自身随机测试项目和用户。
+- `uv run pytest -m 'not integration'`：11 项通过；`uv run ruff check --fix .`、`uv run ruff format .`、`uv run mypy app tests main.py`：通过；OpenAPI YAML 可解析，合同路径测试通过。
+- 未执行其他既有集成测试，因为 A2 测试会清理共享数据库中的用户和项目；不对共享 `mydb` 运行此类破坏性用例。
+- 前端新增 `/projects/:projectId/keys`：owner/editor 从项目详情进入并查看完整 Key；owner 可创建和撤销，editor 只读；viewer 和管理员跨项目 review 不显示入口。
+- Key 列表支持复制完整 Key；创建支持永不过期、30/90/365 天，撤销需要二次确认。服务端使用 Fernet 加密密文持久化，使页面刷新后仍可按权限查看。
+- `npm run typecheck`、`npm run lint`、`npm run build`：通过。
+- 当前开发环境 `backend/.env` 已生成 `API_KEY_SECRET_KEY` 并启用本机功能；该文件被 Git 忽略。部署到服务器时，必须将同一个值安全配置到服务端环境，否则无法解密该数据库中已有 Key。
+
 ### 验证环境说明
 
 - 本轮之前使用过项目忽略目录中的独立 PostgreSQL 18.6 临时实例，监听 `127.0.0.1:55432`；迁移和测试完成后已停止。当前 Docker Desktop 引擎未启动，无法重新创建隔离实例。
@@ -112,4 +128,4 @@
 
 ## 下一步
 
-在隔离 PostgreSQL 上依次执行 0005、0006 迁移，验证公开/私有项目、标签增删/筛选/分页及管理员只读权限；完成验收后再进入 A3。
+确认 API Key 管理页的交互方案后完成 A3 前端，再进入 A4 Mock 网关。

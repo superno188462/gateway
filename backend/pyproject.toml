@@ -12,6 +12,7 @@ dependencies = [
     "pwdlib[argon2]>=0.2,<1",
     "sqlalchemy[asyncio]>=2.0,<3",
     "uvicorn[standard]>=0.34,<1",
+    "cryptography>=44,<47",
 ]
 
 [dependency-groups]

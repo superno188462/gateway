@@ -2,7 +2,7 @@
 
 from enum import StrEnum
 
-from pydantic import Field, field_validator, model_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -30,6 +30,11 @@ class Settings(BaseSettings):
     admin_username: str | None = None
     admin_password: str | None = None
     jwt_secret_key: str = Field(min_length=32)
+    api_key_secret_key: SecretStr | None = Field(
+        default=None,
+        min_length=32,
+        description="用于 API Key 摘要和密文加解密的主密钥；未配置时禁用 Key 功能。",
+    )
     jwt_access_token_expire_minutes: int = Field(default=30, ge=5, le=1440)
 
     @model_validator(mode="after")

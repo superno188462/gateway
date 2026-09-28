@@ -135,3 +135,32 @@ class ProjectMember(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
     )
+
+
+class ApiKey(Base):
+    """项目 API Key；校验摘要与可逆密文分别保存，密钥不以明文落库。"""
+
+    __tablename__ = "api_keys"
+    __table_args__ = (
+        CheckConstraint("status IN ('active', 'revoked')", name="ck_api_keys_status"),
+        Index("ix_api_keys_project_created_at", "project_id", "created_at"),
+    )
+
+    id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), primary_key=True, default=uuid4)
+    project_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("projects.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    name: Mapped[str] = mapped_column(String(100), nullable=False)
+    key_hash: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    encrypted_secret: Mapped[str | None] = mapped_column(String(256))
+    key_prefix: Mapped[str] = mapped_column(String(20), unique=True, nullable=False)
+    key_last_four: Mapped[str] = mapped_column(String(4), nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="active")
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )

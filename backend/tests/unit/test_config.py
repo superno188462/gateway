@@ -51,3 +51,30 @@ def test_admin_password_requires_minimum_length() -> None:
             admin_password="short",
             _env_file=None,
         )
+
+
+def test_api_key_secret_key_is_optional_but_must_be_at_least_32_characters() -> None:
+    assert (
+        Settings(
+            database_url="postgresql+asyncpg://user:pass@localhost/db",
+            jwt_secret_key="x" * 32,
+            _env_file=None,
+        ).api_key_secret_key
+        is None
+    )
+    assert (
+        Settings(
+            database_url="postgresql+asyncpg://user:pass@localhost/db",
+            jwt_secret_key="x" * 32,
+            api_key_secret_key="p" * 32,
+            _env_file=None,
+        ).api_key_secret_key
+        is not None
+    )
+    with pytest.raises(ValidationError):
+        Settings(
+            database_url="postgresql+asyncpg://user:pass@localhost/db",
+            jwt_secret_key="x" * 32,
+            api_key_secret_key="short",
+            _env_file=None,
+        )

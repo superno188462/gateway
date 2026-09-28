@@ -54,6 +54,24 @@ export type ProjectMember = {
   updated_at: string;
 };
 
+export type ApiKeyStatus = "active" | "revoked" | "expired";
+
+export type ApiKey = {
+  id: string;
+  project_id: string;
+  name: string;
+  key_prefix: string;
+  key_last_four: string;
+  secret: string | null;
+  status: ApiKeyStatus;
+  expires_at: string | null;
+  last_used_at: string | null;
+  revoked_at: string | null;
+  created_at: string;
+};
+
+export type CreatedApiKey = ApiKey & { secret: string };
+
 export type ApiError = {
   code?: string;
   message?: string;
@@ -180,6 +198,21 @@ export const apiClient = {
     }, token),
   removeProjectMember: (token: string, projectId: string, userId: string) =>
     request<void>(`/admin/v1/projects/${projectId}/members/${userId}`, {
+      method: "DELETE",
+    }, token),
+  getProjectApiKeys: (token: string, projectId: string) =>
+    request<ApiKey[]>(`/admin/v1/projects/${projectId}/keys`, {}, token),
+  createProjectApiKey: (
+    token: string,
+    projectId: string,
+    payload: { name: string; expires_at: string | null },
+  ) =>
+    request<CreatedApiKey>(`/admin/v1/projects/${projectId}/keys`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }, token),
+  revokeProjectApiKey: (token: string, projectId: string, keyId: string) =>
+    request<void>(`/admin/v1/projects/${projectId}/keys/${keyId}`, {
       method: "DELETE",
     }, token),
 };

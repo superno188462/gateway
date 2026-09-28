@@ -8,6 +8,7 @@ from fastapi import Depends, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
+from app.application.api_keys import ApiKeyService
 from app.application.auth import AdminBootstrapService, AuthService
 from app.application.projects import ProjectService
 from app.config import Settings
@@ -34,6 +35,7 @@ class AppContainer:
     admin_bootstrap: AdminBootstrapService | None
     auth_service: AuthService | None
     project_service: ProjectService | None
+    api_key_service: ApiKeyService | None
 
     @classmethod
     def build(
@@ -56,6 +58,7 @@ class AppContainer:
                 admin_bootstrap=None,
                 auth_service=None,
                 project_service=None,
+                api_key_service=None,
             )
 
         database_engine = create_database_engine(settings.database_url)
@@ -77,6 +80,11 @@ class AppContainer:
             ),
             auth_service=AuthService(session_factory, password_service, jwt_service),
             project_service=ProjectService(session_factory),
+            api_key_service=(
+                ApiKeyService(session_factory, settings.api_key_secret_key.get_secret_value())
+                if settings.api_key_secret_key is not None
+                else None
+            ),
         )
 
     async def startup(self) -> None:
@@ -127,6 +135,19 @@ def get_project_service(request: Request) -> ProjectService:
     service = get_container(request).project_service
     if service is None:
         raise RuntimeError("项目服务未注册")
+    return service
+
+
+def get_api_key_service(request: Request) -> ApiKeyService:
+    """注入项目 API Key 服务；未配置密钥时拒绝签发、查看和验证。"""
+    from fastapi import HTTPException, status
+
+    service = get_container(request).api_key_service
+    if service is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"code": "api_key_unavailable", "message": "请先配置 API_KEY_SECRET_KEY"},
+        )
     return service
 
 

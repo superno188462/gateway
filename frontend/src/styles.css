@@ -104,6 +104,39 @@ h2 { font-size: 28px; letter-spacing: -.03em; }
 .danger-button:disabled { cursor: wait; opacity: .6; }
 .project-detail-meta { display: flex; flex-wrap: wrap; gap: 10px 24px; margin: 22px 0; color: #8490a3; font-size: 11px; }
 .project-detail-meta code { color: #65738b; }
+.project-detail-shortcuts { display: flex; align-items: center; gap: 12px; margin: -7px 0 22px; color: #8490a3; font-size: 11px; }
+.project-key-link { display: inline-flex; align-items: center; gap: 9px; text-decoration: none; }
+.api-keys-intro { align-items: center; }
+.api-key-error { margin-top: 16px; }
+.api-key-panel { margin-top: 24px; }
+.api-key-heading { display: flex; align-items: start; justify-content: space-between; gap: 16px; }
+.api-key-heading p { margin-top: 6px; color: #8490a3; font-size: 12px; line-height: 1.5; }
+.api-key-role-badge { padding: 5px 9px; border-radius: 999px; color: #267b62; background: #e5f5ee; font-size: 11px; }
+.api-key-create-form { display: grid; grid-template-columns: minmax(180px, 1.5fr) minmax(150px, 1fr) auto; align-items: end; gap: 12px; margin-top: 20px; padding-bottom: 20px; border-bottom: 1px solid #edf0f5; }
+.api-key-field { display: grid; gap: 7px; color: #43516a; font-size: 12px; font-weight: 650; }
+.api-key-field input, .api-key-field select { width: 100%; min-height: 42px; padding: 9px 11px; border: 1px solid #d6deea; border-radius: 8px; color: #43516a; background: #fff; font: inherit; font-weight: 400; }
+.api-key-field input:focus, .api-key-field select:focus { border-color: #399b7c; outline: 0; box-shadow: 0 0 0 3px #399b7c1c; }
+.api-key-empty { margin-top: 18px; padding: 24px; }
+.api-key-list { display: grid; margin-top: 4px; }
+.api-key-row { display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 18px 0; border-bottom: 1px solid #edf0f5; }
+.api-key-row:last-child { border-bottom: 0; }
+.api-key-main { display: grid; min-width: 0; gap: 8px; }
+.api-key-name-row { display: flex; flex-wrap: wrap; align-items: center; gap: 9px; }
+.api-key-name-row strong { color: #27354a; font-size: 13px; }
+.api-key-main > code { width: fit-content; padding: 5px 8px; border-radius: 6px; color: #45556e; background: #f2f5f9; font-size: 11px; }
+.api-key-status { padding: 4px 7px; border-radius: 999px; font-size: 10px; }
+.api-key-status-active { color: #187c5b; background: #def8ed; }
+.api-key-status-expired { color: #8c6b2c; background: #fff4d6; }
+.api-key-status-revoked { color: #8a5056; background: #fff0f1; }
+.api-key-meta { display: flex; flex-wrap: wrap; gap: 5px 16px; color: #8490a3; font-size: 10px; }
+.api-key-modal-backdrop { position: fixed; z-index: 20; inset: 0; display: grid; place-items: center; padding: 22px; background: #101a317a; }
+.api-key-modal { display: grid; gap: 18px; width: min(100%, 560px); padding: 26px; border: 1px solid #e3e8f0; border-radius: 15px; background: #fff; box-shadow: 0 24px 80px #101a3140; }
+.api-key-modal-heading { display: flex; align-items: start; gap: 12px; }
+.api-key-modal-heading h3 { font-size: 17px; }
+.api-key-modal-heading p { margin-top: 6px; color: #8490a3; font-size: 12px; line-height: 1.5; }
+.api-key-modal-icon { display: grid; flex: 0 0 auto; place-items: center; width: 28px; height: 28px; border-radius: 50%; color: #8a6320; background: #fff1cf; font-weight: 800; }
+.api-key-secret-value { overflow-wrap: anywhere; padding: 13px; border: 1px solid #dce4ed; border-radius: 8px; color: #27354a; background: #f7f9fc; font-size: 12px; line-height: 1.6; user-select: all; }
+.api-key-modal-actions { display: flex; justify-content: end; gap: 9px; }
 .member-count { padding: 5px 9px; border-radius: 999px; color: #52627b; background: #f0f3f8; font-size: 11px; }
 .project-title-row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
 .project-owner-badge { padding: 4px 8px; border-radius: 999px; color: #59677e; background: #eef1f6; font-size: 10px; white-space: nowrap; }
@@ -180,6 +213,11 @@ h2 { font-size: 28px; letter-spacing: -.03em; }
   .project-detail-intro { align-items: start; flex-direction: column; }
   .project-detail-actions { width: 100%; }
   .member-row { flex-wrap: wrap; }
+  .api-key-create-form { grid-template-columns: minmax(0, 1fr); }
+  .api-key-row { align-items: start; flex-direction: column; }
+  .api-key-meta { display: grid; }
+  .project-detail-shortcuts { align-items: start; flex-direction: column; }
+  .api-key-modal-actions { align-items: stretch; flex-direction: column-reverse; }
   .login-panel { padding: 30px 24px; }
   .login-brand { margin-bottom: 38px; }
   .user-badge { display: none; }

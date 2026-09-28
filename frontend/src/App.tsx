@@ -7,6 +7,7 @@ import { RegisterPage } from "./pages/RegisterPage";
 import { ProjectsPage } from "./pages/ProjectsPage";
 import { ProjectDetailPage } from "./pages/ProjectDetailPage";
 import { ProjectCreatePage } from "./pages/ProjectCreatePage";
+import { ProjectApiKeysPage } from "./pages/ProjectApiKeysPage";
 
 const navigation = [
   { label: "运行状态", to: "/" },
@@ -19,7 +20,9 @@ function AppShell() {
   const location = useLocation();
   const pageTitle = location.pathname === "/projects/new"
     ? "创建项目"
-    : location.pathname.startsWith("/projects/")
+    : location.pathname.endsWith("/keys")
+      ? "API Key"
+      : location.pathname.startsWith("/projects/")
       ? "项目详情"
       : location.pathname === "/projects"
         ? "项目"
@@ -77,6 +80,7 @@ function AppShell() {
           <Route element={<ProjectsPage />} path="/projects" />
           <Route element={<ProjectCreatePage />} path="/projects/new" />
           <Route element={<ProjectDetailPage />} path="/projects/:projectId" />
+          <Route element={<ProjectApiKeysPage />} path="/projects/:projectId/keys" />
           <Route element={<Navigate replace to="/" />} path="*" />
         </Routes>
       </main>

@@ -172,6 +172,9 @@ export function ProjectDetailPage() {
   }
 
   const canManage = project?.owner_id === user?.id;
+  const canViewApiKeys = canManage || members.some(
+    (member) => member.user_id === user?.id && member.role === "editor",
+  );
   return (
     <section className="page-content" aria-labelledby="project-detail-title">
       <Link className="back-link" to="/projects">← 返回项目列表</Link>
@@ -211,6 +214,14 @@ export function ProjectDetailPage() {
             <span>所有者 ID：<code>{project.owner_id}</code></span>
             <span>创建于 {new Date(project.created_at).toLocaleString()}</span>
           </div>
+          {canViewApiKeys && (
+            <div className="project-detail-shortcuts">
+              <Link className="secondary-button project-key-link" to={`/projects/${project.id}/keys`}>
+                {canManage ? "管理 API Key" : "查看 API Key"} <span aria-hidden="true">→</span>
+              </Link>
+              <span>owner 可创建和撤销；editor 可查看密钥信息。</span>
+            </div>
+          )}
           {canManage && (
             <section className="project-detail-panel" aria-labelledby="project-edit-title">
               <h3 id="project-edit-title">项目设置</h3>
