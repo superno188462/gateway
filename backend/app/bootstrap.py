@@ -8,6 +8,9 @@ from fastapi import FastAPI
 from app.api.api_keys import router as api_keys_router
 from app.api.auth import router as auth_router
 from app.api.health import router as health_router
+from app.api.llm_gateway import router as llm_gateway_router
+from app.api.llm_services import account_router as account_services_router
+from app.api.llm_services import router as llm_services_router
 from app.api.projects import router as projects_router
 from app.config import Settings
 from app.container import AppContainer
@@ -39,4 +42,7 @@ def create_app(
     app.include_router(auth_router)
     app.include_router(projects_router)
     app.include_router(api_keys_router)
+    app.include_router(llm_services_router)
+    app.include_router(account_services_router)
+    app.include_router(llm_gateway_router)
     return app

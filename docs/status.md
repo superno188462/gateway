@@ -10,15 +10,15 @@
 | A1 | 统一登录、角色、JWT | 四种启动分支和登录流程 | 已完成 |
 | A2 | 项目管理 | CRUD、项目成员权限、标签检索和分页 | 功能已完成；隔离 PostgreSQL 集成验收待执行 |
 | A3 | API Key | owner/editor 可查看明文、加密存储、撤销 | 已完成 |
-| A4 | Mock 网关 | Key 调用、token 和请求记录 | 未开始 |
+| A4 | LLM Mock 网关 | 用户级额度、项目分配、Key 调用、月度用量和无正文请求记录 | 前后端已完成 |
 | A5 | 日志与用量 | 筛选、分页、汇总一致 | 未开始 |
 | A6 | 模板与记忆 | 固定目录、文件 CRUD、并发冲突 | 未开始 |
 | A7 | 公网部署 | TLS、限流、备份、回滚和安全验收 | 未开始 |
 
 ## 当前阶段
 
-- 当前：A3 后端和前端已完成；下一阶段进入 A4 Mock 网关。
-- 本轮不包含：Mock 模型接口、日志用量、模板记忆和公网部署。
+- 当前：A4 LLM Mock 网关、用户级额度和前端个人服务/项目分配页面已完成；下一步进入 A5。
+- 本轮不包含：真实 LLM Provider、ASR/TTS/Embedding/RAG/记忆/画像、A5 日志页面和公网部署。
 - 运行约定：后端 `uv run python main.py`；前端在 F0 后使用 `npm run dev`；运行时数据库使用服务器 PostgreSQL。Docker 仅用于后续服务器部署。
 - DI 约定：`AppContainer` 注册配置、数据库引擎和基础设施服务单例；路由通过 FastAPI `Depends` 获取，不自行创建服务。
 
@@ -119,13 +119,32 @@
 - `npm run typecheck`、`npm run lint`、`npm run build`：通过。
 - 当前开发环境 `backend/.env` 已生成 `API_KEY_SECRET_KEY` 并启用本机功能；该文件被 Git 忽略。部署到服务器时，必须将同一个值安全配置到服务端环境，否则无法解密该数据库中已有 Key。
 
+## A4 LLM Mock 后端验证记录
+
+- 新增 `20260928_0009_llm_mock_gateway` 和 `20260928_0010_user_service_quotas` 迁移，创建项目服务订阅、用户服务月额度、项目/服务/UTC 月用量桶和无正文网关请求表；0010 为已有账号发放默认额度，并保留既有项目额度分配。
+- 新用户默认获得每 UTC 自然月 100,000 个 LLM Mock tokens，可由 `DEFAULT_LLM_MONTHLY_TOKEN_LIMIT` 调整；管理员可按用户设置或撤销 LLM 月度额度。新用户注册在用户与额度同一事务中完成。
+- 用户可查询个人 LLM 服务能力、月总上限、跨项目分配额、剩余可分配量及本月总消耗；项目 owner 可申请服务并指定项目月额度，或调整已有项目额度。正常申请/调整时项目分配合计不能超过用户上限；管理员下调用户上限时允许形成超配，调用仍受个人总额度限制，页面会提醒用户。项目额度不得低于当月已用与预留量。
+- 管理员对项目仍只有全局只读 review 权限；管理员可配置用户账户级服务额度，但不能替项目 owner 调整项目服务分配。
+- 新增 OpenAI 风格 `POST /v1/chat/completions`，Bearer 项目 API Key 自动解析项目，调用端不传 project ID；支持 JSON 与 SSE、`stream_options.include_usage`。
+- 网关同时对用户跨项目总额度和项目自身额度核验；按 prompt 估算和 `max_tokens` 预留额度，调用成功后记 Provider 用量并释放多余预留。无用户能力/项目服务返回 403，模型不存在 404，任一额度不足返回 429，Provider 错误 502。响应和日志提供请求 ID。
+- `gateway_requests` 仅记录项目/Key/服务/模型/状态/token/延迟/错误码/请求 ID，不保存提示词或模型回复正文；Mock tokenizer 是粗估，替换真实 Provider 后应使用 Provider 返回用量。
+- 已在获准使用的测试数据库执行 `uv run alembic upgrade head`，目标版本为 `20260928_0010 (head)`。
+- PostgreSQL 集成流程覆盖默认/单用户额度、用户名/UUID 管理员查找、项目分配超额后下调用户上限、归零暂停调用、重新授额、JSON、SSE、错误 Key、请求记录关联及不保存正文；测试只清理自身随机测试记录。
+- `uv run pytest -m 'not integration' -q`：13 passed，6 deselected。
+- `uv run pytest tests/integration/test_api_keys.py tests/integration/test_llm_mock_gateway.py -m integration -q`：2 passed；只清理本次生成的随机测试数据。
+- `uv run ruff check .`、`uv run ruff format --check .`、`uv run mypy app tests main.py`、`uv lock --check`：全部通过；OpenAPI 合同测试包含在单元测试中。
+- 已在获准使用的测试数据库执行 `uv run alembic upgrade head`；`uv run alembic current` 为 `20260928_0010 (head)`。
+- 未运行会删除共享数据库项目/用户的旧 A2 集成测试。
+- 前端 `/account/services` 展示个人月上限、项目分配总额、可分配额度和跨项目月用量；项目详情为 owner 提供服务申请、额度调整和本项目使用量。
+- 管理员可在“我的服务”页按精确用户名或 UUID 查找用户、查看额度汇总并修改 LLM 月额度；允许额度低于项目分配总和或设为 0，用户侧会显示超配/暂停提醒。查找与目标用户额度查询接口仅管理员可访问。
+- `npm run typecheck`、`npm run lint`、`npm run build`：全部通过。
+
 ### 验证环境说明
 
-- 本轮之前使用过项目忽略目录中的独立 PostgreSQL 18.6 临时实例，监听 `127.0.0.1:55432`；迁移和测试完成后已停止。当前 Docker Desktop 引擎未启动，无法重新创建隔离实例。
-- 没有修改本机已有的 PostgreSQL 5432 服务，也没有使用服务器数据库凭据。
-- 目标生产版本 PostgreSQL 16 的 Docker 部署与迁移验证留到 A7；B0 已验证 SQLAlchemy、Alembic 和健康探针在真实 PostgreSQL 上工作。
+- 本轮迁移及 PostgreSQL 集成测试使用项目配置的获准测试数据库 `mydb`；集成测试创建随机记录并在结束时清理。
+- Docker 部署验证仍留到 A7；本轮无需 Docker。
 - Docker Desktop 引擎本机未成功就绪；根据项目决策，本地开发和本轮验收不以 Docker 为前置条件。
 
 ## 下一步
 
-确认 API Key 管理页的交互方案后完成 A3 前端，再进入 A4 Mock 网关。
+进入 A5 日志检索与 Dashboard。

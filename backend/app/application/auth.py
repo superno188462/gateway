@@ -8,7 +8,7 @@ from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.infrastructure.db.models import AuthSession, User
+from app.infrastructure.db.models import AuthSession, User, UserServiceQuota
 from app.security import JwtService, PasswordService
 
 
@@ -72,10 +72,12 @@ class AuthService:
         session_factory: async_sessionmaker[AsyncSession],
         password_service: PasswordService,
         jwt_service: JwtService,
+        default_service_quotas: dict[str, int] | None = None,
     ) -> None:
         self._session_factory = session_factory
         self._password_service = password_service
         self._jwt_service = jwt_service
+        self._default_service_quotas = default_service_quotas or {}
 
     async def login(self, username: str, password: str) -> tuple[str, int]:
         async with self._session_factory.begin() as session:
@@ -104,6 +106,16 @@ class AuthService:
                     role="user",
                 )
                 session.add(user)
+                await session.flush()
+                for service_code, monthly_token_limit in self._default_service_quotas.items():
+                    if monthly_token_limit > 0:
+                        session.add(
+                            UserServiceQuota(
+                                user_id=user.id,
+                                service_code=service_code,
+                                monthly_token_limit=monthly_token_limit,
+                            )
+                        )
                 await session.flush()
                 return user
         except IntegrityError as error:

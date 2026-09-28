@@ -56,6 +56,24 @@ class AuthSession(Base):
     )
 
 
+class UserServiceQuota(Base):
+    """管理员授予用户的服务级月度 token 总上限。"""
+
+    __tablename__ = "user_service_quotas"
+    __table_args__ = (
+        CheckConstraint("monthly_token_limit > 0", name="ck_user_service_quotas_limit"),
+    )
+
+    user_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    service_code: Mapped[str] = mapped_column(String(50), primary_key=True)
+    monthly_token_limit: Mapped[int] = mapped_column(nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+
 class Project(Base):
     """Agent 项目。"""
 
@@ -161,6 +179,78 @@ class ApiKey(Base):
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class ProjectServiceSubscription(Base):
+    """项目已开通的服务及 owner 分配给该项目的月度上限。"""
+
+    __tablename__ = "project_service_subscriptions"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('active', 'suspended')", name="ck_service_subscriptions_status"
+        ),
+        CheckConstraint("monthly_token_limit > 0", name="ck_service_subscriptions_token_limit"),
+    )
+
+    project_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("projects.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    service_code: Mapped[str] = mapped_column(String(50), primary_key=True)
+    monthly_token_limit: Mapped[int] = mapped_column(nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, server_default="active")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+
+class ServiceUsageBucket(Base):
+    """按项目、服务和 UTC 月份记录已消费及预留 token。"""
+
+    __tablename__ = "service_usage_buckets"
+
+    project_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("projects.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    service_code: Mapped[str] = mapped_column(String(50), primary_key=True)
+    period_start: Mapped[datetime] = mapped_column(DateTime(timezone=True), primary_key=True)
+    tokens_used: Mapped[int] = mapped_column(nullable=False, server_default="0")
+    tokens_reserved: Mapped[int] = mapped_column(nullable=False, server_default="0")
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+
+class GatewayRequest(Base):
+    """不含提示词或回复正文的网关调用记录。"""
+
+    __tablename__ = "gateway_requests"
+    __table_args__ = (
+        Index("ix_gateway_requests_project_created", "project_id", "created_at"),
+        Index("ix_gateway_requests_key_created", "api_key_id", "created_at"),
+    )
+
+    id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), primary_key=True, default=uuid4)
+    request_id: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    project_id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), nullable=False)
+    api_key_id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), nullable=False)
+    service_code: Mapped[str] = mapped_column(String(50), nullable=False)
+    model: Mapped[str] = mapped_column(String(100), nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False)
+    prompt_tokens: Mapped[int] = mapped_column(nullable=False, server_default="0")
+    completion_tokens: Mapped[int] = mapped_column(nullable=False, server_default="0")
+    total_tokens: Mapped[int] = mapped_column(nullable=False, server_default="0")
+    latency_ms: Mapped[int] = mapped_column(nullable=False, server_default="0")
+    error_code: Mapped[str | None] = mapped_column(String(80))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

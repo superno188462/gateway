@@ -6,7 +6,7 @@
 
 第一版优先证明下面这条端到端流程真实可用：
 
-> 管理员创建项目 → 创建项目 API Key → 调用兼容 OpenAI 的聊天接口 → 网关先转发到可控的 Mock Provider → 返回结果 → token 用量和日志可在控制台查询。
+> 用户创建项目 → owner 申请 LLM 服务并获得首期月额度 → 创建项目 API Key → 调用兼容 OpenAI 的聊天接口（无需传项目 ID）→ 网关按项目服务权限和月额度调用 Mock Provider → 返回结果并记录不含正文的 token 日志。
 
 ## 2. 用户与权限边界
 
@@ -202,7 +202,7 @@ GET  /api/admin/v1/requests/{request_id}
 
 ### A4：Mock 网关
 
-实现 Provider Port、Mock Provider、`/v1/chat/completions`、普通/SSE 响应、超时与取消、token 记录和请求记录。先用 curl/合同测试验证，再接入控制台展示。
+实现服务目录、用户级 LLM 月度额度、项目额度分配、`/v1/chat/completions`、普通/SSE 响应、月度 token 预留与结算、无正文请求记录。新用户默认每月 100,000 tokens，管理员可调整个人上限；用户可将上限分配到自己的多个项目。当前只实现 LLM，不接入真实厂商。
 
 ### A5：日志与用量
 

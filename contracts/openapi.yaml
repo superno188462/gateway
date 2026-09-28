@@ -357,6 +357,215 @@ paths:
         "403": { description: 当前用户不是项目 owner }
         "404": { description: 项目或 Key 不存在 }
         "503": { description: 未配置 API_KEY_SECRET_KEY }
+  /api/admin/v1/services:
+    get:
+      operationId: list_service_catalog
+      summary: 查询服务目录和模型
+      description: 目前只提供 LLM Mock 服务；每个用户可用的月额度由个人服务接口返回。
+      tags: [Project Services]
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: 可申请的服务及其模型列表
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/ServiceCatalogResponse" }
+  /api/admin/v1/projects/{project_id}/services:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+    get:
+      operationId: list_project_services
+      summary: 查询项目已开通服务和用量
+      description: 项目成员、公开项目 review 用户和管理员可读；用量周期按 UTC 自然月计算。
+      tags: [Project Services]
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: 项目服务订阅及当前月已用、预留 token
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/ProjectServiceResponse" }
+        "403": { description: 无权 review 此项目 }
+        "404": { description: 项目不存在 }
+    post:
+      operationId: apply_project_service
+      summary: 申请项目服务
+      description: 仅项目 owner 可申请；额度从 owner 的用户级上限中分配，自动开通且无支付或人工审批。
+      tags: [Project Services]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ServiceApplicationRequest" }
+      responses:
+        "201":
+          description: 已开通服务
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ProjectServiceResponse" }
+        "403": { description: 只有项目 owner 可以申请 }
+        "404": { description: 项目或服务不存在 }
+        "409": { description: 重复申请或用户额度不足以容纳该项目分配 }
+  /api/admin/v1/projects/{project_id}/services/{service_code}:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+      - name: service_code
+        in: path
+        required: true
+        schema: { type: string }
+    patch:
+      operationId: upgrade_project_service
+      summary: 调整项目服务额度
+      description: 仅项目 owner 可调整项目额度；所有本人项目分配总和不能超过用户上限，额度不能低于当月项目已用和预留 token。
+      tags: [Project Services]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ProjectServiceAllocationRequest" }
+      responses:
+        "200":
+          description: 已调整项目月度额度
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ProjectServiceResponse" }
+        "403": { description: 只有项目 owner 可以升级 }
+        "404": { description: 服务订阅不存在 }
+        "409": { description: 用户额度不足或项目额度不能低于当月已用量 }
+  /api/admin/v1/users/{user_id}/services/{service_code}:
+    parameters:
+      - name: user_id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+      - name: service_code
+        in: path
+        required: true
+        schema: { type: string }
+    put:
+      operationId: set_user_service_quota
+      summary: 设置用户服务月额度
+      description: 仅管理员可设置；新注册用户使用配置的默认额度。允许上限低于项目分配总额，项目分配记录保留但调用受用户总上限约束；设为 0 会暂停该用户此服务的调用。
+      tags: [Project Services]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SetUserServiceQuotaRequest" }
+      responses:
+        "200":
+          description: 更新后的用户服务额度
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/UserServiceQuotaResponse" }
+        "403": { description: 需要管理员权限 }
+        "404": { description: 用户或服务不存在 }
+  /api/admin/v1/users/lookup:
+    get:
+      operationId: lookup_user_for_quota_management
+      summary: 按用户名或用户 ID 查找额度目标
+      description: 仅管理员可用；用户名必须精确匹配。user_id 与 username 必须且只能提供一个。
+      tags: [Project Services]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: user_id
+          in: query
+          required: false
+          description: 目标用户 UUID，与 username 二选一。
+          schema: { type: string, format: uuid }
+        - name: username
+          in: query
+          required: false
+          description: 目标用户唯一用户名，精确匹配。
+          schema: { type: string, minLength: 1, maxLength: 100 }
+      responses:
+        "200":
+          description: 已找到目标用户的非敏感标识
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/QuotaTargetResponse" }
+        "403": { description: 需要管理员权限 }
+        "404": { description: 用户不存在 }
+        "422": { description: 必须且只能提供一个查询条件 }
+  /api/admin/v1/users/{user_id}/services:
+    get:
+      operationId: get_user_service_quotas
+      summary: 查看指定用户服务月额度
+      description: 仅管理员可用；返回目标用户的服务总上限、项目分配、可分配余额和当月用量。
+      tags: [Project Services]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: user_id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: 目标用户服务额度列表
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/UserServiceQuotaResponse" }
+        "403": { description: 需要管理员权限 }
+        "404": { description: 用户不存在 }
+  /api/v1/me/services:
+    get:
+      operationId: list_my_services
+      summary: 查看我的服务能力和额度
+      description: 当前登录用户可查看服务目录中的额度、项目分配合计、可分配额度和跨项目当月用量。
+      tags: [My Services]
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: 个人服务能力列表；当前仅返回 LLM Mock 服务
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/UserServiceQuotaResponse" }
+        "401": { description: 访问令牌缺失或无效 }
+  /v1/chat/completions:
+    post:
+      operationId: create_chat_completion
+      summary: 调用 LLM Mock 聊天模型
+      description: 使用项目 API Key 作为 Bearer 凭证；项目由 Key 自动解析，无需传 project_id。支持 JSON 与 SSE，按 UTC 自然月扣除项目服务额度。消息和回复正文不会持久化。
+      tags: [LLM Gateway]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ChatCompletionRequest" }
+      responses:
+        "200":
+          description: "模型回复；stream=true 时返回 Server-Sent Events，终止事件为 data: [DONE]"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ChatCompletionResponse" }
+            text/event-stream:
+              schema: { type: string, description: OpenAI-compatible SSE chunks. }
+        "401": { description: API Key 缺失、无效、撤销或过期 }
+        "403": { description: 项目尚未开通 LLM Mock 服务 }
+        "404": { description: 模型不存在 }
+        "429": { description: 项目分配额度或用户跨项目总额度不足 }
+        "502": { description: Provider 调用失败 }
 components:
   parameters:
     ProjectId:
@@ -621,3 +830,90 @@ components:
               type: string
               writeOnly: true
               description: 完整 Key；owner/editor 可随时查看，数据库只保存加密密文。
+    ServiceCatalogResponse:
+      type: object
+      required: [code, name, models]
+      properties:
+        code: { type: string, example: mock-llm-v1, description: 稳定服务代码。 }
+        name: { type: string, description: 服务展示名称。 }
+        models:
+          type: array
+          items: { type: string }
+    ServiceApplicationRequest:
+      type: object
+      required: [service_code, monthly_token_limit]
+      properties:
+        service_code: { type: string, example: mock-llm-v1 }
+        monthly_token_limit: { type: integer, minimum: 1, description: 分配给项目的月 token 上限；不得超过用户可分配额度。 }
+    ProjectServiceAllocationRequest:
+      type: object
+      required: [monthly_token_limit]
+      properties:
+        monthly_token_limit: { type: integer, minimum: 1, description: 新项目月度分配；不能低于当月已用与预留量。 }
+    ProjectServiceResponse:
+      type: object
+      required: [project_id, service_code, monthly_token_limit, status, period_start, tokens_used, tokens_reserved]
+      properties:
+        project_id: { type: string, format: uuid }
+        service_code: { type: string }
+        monthly_token_limit: { type: integer }
+        status: { type: string, enum: [active, suspended] }
+        period_start: { type: string, format: date, description: 当前 UTC 月度用量周期起点。 }
+        tokens_used: { type: integer, description: 本周期已确认消耗。 }
+        tokens_reserved: { type: integer, description: 处理中请求的预留额度。 }
+    SetUserServiceQuotaRequest:
+      type: object
+      required: [monthly_token_limit]
+      properties:
+        monthly_token_limit: { type: integer, minimum: 0, description: 用户每月服务总上限；允许低于项目分配总额，0 会暂停调用且保留项目分配记录。 }
+    QuotaTargetResponse:
+      type: object
+      required: [id, username, role]
+      properties:
+        id: { type: string, format: uuid, description: 目标用户 ID。 }
+        username: { type: string, description: 唯一用户名。 }
+        role: { type: string, enum: [admin, user], description: 当前平台角色。 }
+    UserServiceQuotaResponse:
+      type: object
+      required: [service_code, name, models, monthly_token_limit, allocated_tokens, available_tokens, tokens_used, tokens_reserved]
+      properties:
+        service_code: { type: string, description: 当前服务代码。 }
+        name: { type: string, description: 服务展示名称。 }
+        models: { type: array, items: { type: string } }
+        monthly_token_limit: { type: integer, description: 管理员授予的用户月度上限；0 表示服务调用已暂停。 }
+        allocated_tokens: { type: integer, description: 已分配给该用户所有项目的额度总和；管理员可将用户上限调到此值以下。 }
+        available_tokens: { type: integer, description: 可继续分配给项目的余额；若项目分配已超过用户上限则为 0。 }
+        tokens_used: { type: integer, description: 该用户所有项目本月已确认消耗。 }
+        tokens_reserved: { type: integer, description: 该用户所有项目本月预留 token。 }
+    ChatCompletionRequest:
+      type: object
+      required: [model, messages]
+      properties:
+        model: { type: string, example: mock-chat }
+        messages:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items: { $ref: "#/components/schemas/ChatMessage" }
+        max_tokens: { type: integer, minimum: 1, maximum: 4096, default: 256, description: 每次生成上限并用于预留额度。 }
+        stream: { type: boolean, default: false }
+        stream_options:
+          type: object
+          properties:
+            include_usage: { type: boolean, description: 在最后一个 SSE chunk 附带 token 用量。 }
+    ChatMessage:
+      type: object
+      required: [role, content]
+      properties:
+        role: { type: string, enum: [system, user, assistant] }
+        content: { type: string, minLength: 1, maxLength: 100000, description: 正文仅用于本次请求，不写入调用日志。 }
+    ChatCompletionResponse:
+      type: object
+      required: [id, object, created, model, choices, usage]
+      properties:
+        id: { type: string, description: 请求追踪 ID。 }
+        object: { type: string, enum: [chat.completion] }
+        created: { type: integer, description: Unix 时间戳。 }
+        model: { type: string }
+        choices: { type: array, items: { type: object } }
+        usage: { type: object, description: prompt/completion/total token 数。 }

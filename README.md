@@ -16,7 +16,7 @@
 $env:DATABASE_URL = "postgresql+asyncpg://数据库用户:数据库密码@119.45.48.180:5432/数据库名"
 ```
 
-当前后端读取的应用配置包括 `DATABASE_URL`、`APP_ENV`、`LOG_LEVEL`、`JWT_SECRET_KEY`、`JWT_ACCESS_TOKEN_EXPIRE_MINUTES` 和 A3 的 `API_KEY_SECRET_KEY`。管理员引导可同时配置 `ADMIN_USERNAME`、`ADMIN_PASSWORD`；两项都缺省时必须已经存在数据库管理员。`POSTGRES_USER`、`POSTGRES_PASSWORD` 等属于数据库容器配置，不属于应用配置，因此不放在应用 `.env.example` 中。
+当前后端读取的应用配置包括 `DATABASE_URL`、`APP_ENV`、`LOG_LEVEL`、`JWT_SECRET_KEY`、`JWT_ACCESS_TOKEN_EXPIRE_MINUTES`、`DEFAULT_LLM_MONTHLY_TOKEN_LIMIT` 和 A3 的 `API_KEY_SECRET_KEY`。管理员引导可同时配置 `ADMIN_USERNAME`、`ADMIN_PASSWORD`；两项都缺省时必须已经存在数据库管理员。`POSTGRES_USER`、`POSTGRES_PASSWORD` 等属于数据库容器配置，不属于应用配置，因此不放在应用 `.env.example` 中。
 
 本轮 B0 已使用隔离的本地 PostgreSQL 临时实例完成验证，但不会作为项目运行时数据库。`compose.yaml` 当前只包含 PostgreSQL 服务骨架；完整的前后端服务器 Docker 部署脚本将在 A7 阶段补齐后才可用于生产部署。
 
@@ -69,6 +69,26 @@ API_KEY_SECRET_KEY=至少32位的随机字符串
 可在后端目录运行 `uv run python -c "import secrets; print(secrets.token_urlsafe(48))"` 生成。owner/editor 需要随时查看完整 Key，因此数据库以 Fernet 加密密文保存，并使用 HMAC 摘要验证调用。主密钥必须妥善备份并保持不变；更换后已有 Key 将无法解密或验证。未设置时后端正常启动，但 Key 管理接口返回 `503 api_key_unavailable`。
 
 项目 owner 使用 `POST /api/admin/v1/projects/{project_id}/keys` 创建 Key。owner/editor 可通过列表随时查看完整 Key；每个 Key 默认授权整个项目，可分别用于不同客户端或运行环境。只有 owner 可通过 `DELETE /api/admin/v1/projects/{project_id}/keys/{key_id}` 撤销 Key。管理员全局 review 权限不授予 Key 访问权限。
+
+## A4 LLM Mock 服务
+
+新注册用户默认获得每 UTC 自然月 100,000 LLM tokens；`DEFAULT_LLM_MONTHLY_TOKEN_LIMIT` 可调整新用户默认值。管理员可在“我的服务”页按用户名或 UUID 查找用户并设置额度，对应接口包括 `GET /api/admin/v1/users/lookup?username=...`（或 `user_id=...`）、`GET /api/admin/v1/users/{user_id}/services` 和 `PUT /api/admin/v1/users/{user_id}/services/mock-llm-v1`。管理员可把上限调低到项目分配总额以下或设为 0；项目额度记录保留，网关仍按用户总上限拦截调用。个人服务页会在项目分配超出个人上限或服务暂停时提醒用户。用户可通过 `GET /api/v1/me/services` 查看自己的上限、分配和用量。
+
+项目 owner 登录后可查询 `GET /api/admin/v1/services`，并通过 `POST /api/admin/v1/projects/{project_id}/services` 申请 `mock-llm-v1`、指定该项目的月 token 分配额。本人拥有的所有项目分配额合计不能超过个人总上限；owner 可通过 `PATCH /api/admin/v1/projects/{project_id}/services/{service_code}` 调整分配。项目用量可通过 `GET /api/admin/v1/projects/{project_id}/services` 查看。额度是 Mock 阶段的使用上限，不涉及费用或支付。
+
+外部客户端使用项目 API Key 调用 OpenAI 风格聊天接口，项目由 Key 自动识别：
+
+```powershell
+$headers = @{ Authorization = "Bearer $env:PROJECT_API_KEY" }
+$body = @{
+  model = "mock-chat"
+  messages = @(@{ role = "user"; content = "你好，请介绍一下这个网关" })
+  max_tokens = 256
+} | ConvertTo-Json -Depth 5
+Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/v1/chat/completions -Headers $headers -ContentType "application/json" -Body $body
+```
+
+将 `stream` 设为 `true` 可返回 SSE；成功响应包含 token 用量，额度耗尽返回 429，未申请服务返回 403。Mock tokenizer 仅用于开发演示，不代表真实模型 tokenizer。网关日志记录项目、Key、模型、token、状态和请求 ID，不保存消息或回复正文。
 
 ## 验证
 

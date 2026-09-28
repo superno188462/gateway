@@ -5,6 +5,8 @@ import {
   apiClient,
   type Project,
   type ProjectMember,
+  type ProjectService,
+  type UserServiceQuota,
   type ProjectVisibility,
 } from "../api/client";
 import { useAuth } from "../auth/useAuth";
@@ -37,6 +39,13 @@ export function ProjectDetailPage() {
   const [isAddingMember, setIsAddingMember] = useState(false);
   const [removingMemberId, setRemovingMemberId] = useState<string | null>(null);
   const [updatingMemberId, setUpdatingMemberId] = useState<string | null>(null);
+  const [projectServices, setProjectServices] = useState<ProjectService[]>([]);
+  const [serviceQuotas, setServiceQuotas] = useState<UserServiceQuota[]>([]);
+  const [isLoadingServices, setIsLoadingServices] = useState(true);
+  const [savingServiceCode, setSavingServiceCode] = useState<string | null>(null);
+  const [serviceAllocationInputs, setServiceAllocationInputs] = useState<Record<string, string>>({});
+  const [serviceError, setServiceError] = useState<string | null>(null);
+  const [serviceSuccess, setServiceSuccess] = useState<string | null>(null);
 
   const loadProject = useCallback(async () => {
     if (!token || !projectId) return;
@@ -72,6 +81,33 @@ export function ProjectDetailPage() {
     void loadProject();
     void loadMembers();
   }, [loadMembers, loadProject]);
+
+  useEffect(() => {
+    if (!token || !projectId || project?.owner_id !== user?.id) {
+      setIsLoadingServices(false);
+      return;
+    }
+    let isCurrent = true;
+    setIsLoadingServices(true);
+    setServiceError(null);
+    void Promise.all([
+      apiClient.getProjectServices(token, projectId),
+      apiClient.getMyServices(token),
+    ]).then(([projectItems, quotaItems]) => {
+      if (!isCurrent) return;
+      setProjectServices(projectItems);
+      setServiceQuotas(quotaItems);
+      setServiceAllocationInputs(Object.fromEntries(quotaItems.map((quota) => {
+        const allocation = projectItems.find((item) => item.service_code === quota.service_code);
+        return [quota.service_code, allocation ? String(allocation.monthly_token_limit) : ""];
+      })));
+    }).catch((reason: unknown) => {
+      if (isCurrent) setServiceError(errorMessage(reason, "服务额度加载失败，请重试。"));
+    }).finally(() => {
+      if (isCurrent) setIsLoadingServices(false);
+    });
+    return () => { isCurrent = false; };
+  }, [project?.owner_id, projectId, token, user?.id]);
 
   async function saveProject() {
     if (!token || !projectId || !name.trim() || isSavingProject) return;
@@ -171,6 +207,46 @@ export function ProjectDetailPage() {
     }
   }
 
+  async function saveProjectService(quota: UserServiceQuota) {
+    if (!token || !projectId || savingServiceCode) return;
+    const monthlyTokenLimit = Number(serviceAllocationInputs[quota.service_code]);
+    if (!Number.isSafeInteger(monthlyTokenLimit) || monthlyTokenLimit < 1) {
+      setServiceError("请输入大于 0 的整数 token 上限。");
+      return;
+    }
+    const existing = projectServices.find((item) => item.service_code === quota.service_code);
+    const maximum = quota.available_tokens + (existing?.monthly_token_limit ?? 0);
+    if (monthlyTokenLimit > maximum) {
+      setServiceError(`此项目最多可分配 ${new Intl.NumberFormat("zh-CN").format(maximum)} tokens；请先在个人服务页增加可用额度或调整其他项目。`);
+      return;
+    }
+    setSavingServiceCode(quota.service_code);
+    setServiceError(null);
+    setServiceSuccess(null);
+    try {
+      const updated = existing
+        ? await apiClient.updateProjectServiceAllocation(token, projectId, quota.service_code, monthlyTokenLimit)
+        : await apiClient.applyProjectService(token, projectId, {
+            service_code: quota.service_code,
+            monthly_token_limit: monthlyTokenLimit,
+          });
+      setProjectServices((current) => [
+        ...current.filter((item) => item.service_code !== updated.service_code),
+        updated,
+      ]);
+      setServiceSuccess(existing ? "项目额度已更新。" : "服务已申请并开通。" );
+      try {
+        setServiceQuotas(await apiClient.getMyServices(token));
+      } catch {
+        setServiceError("额度已保存，但个人额度汇总未能刷新，请稍后手动刷新页面。");
+      }
+    } catch (reason) {
+      setServiceError(errorMessage(reason, "项目服务额度保存失败，请重试。"));
+    } finally {
+      setSavingServiceCode(null);
+    }
+  }
+
   const canManage = project?.owner_id === user?.id;
   const canViewApiKeys = canManage || members.some(
     (member) => member.user_id === user?.id && member.role === "editor",
@@ -221,6 +297,84 @@ export function ProjectDetailPage() {
               </Link>
               <span>owner 可创建和撤销；editor 可查看密钥信息。</span>
             </div>
+          )}
+          {canManage && (
+            <section className="project-detail-panel service-allocation-panel" aria-labelledby="project-service-title">
+              <div className="service-allocation-heading">
+                <div>
+                  <h3 id="project-service-title">服务与额度</h3>
+                  <p>从个人月度额度中为此项目分配 token；所有项目共享个人总额度。</p>
+                </div>
+                <Link className="secondary-button" to="/account/services">查看个人额度</Link>
+              </div>
+              {serviceError && <p className="form-error" role="alert">{serviceError}</p>}
+              {serviceSuccess && <p className="form-success" role="status">{serviceSuccess}</p>}
+              {serviceQuotas.some((quota) =>
+                quota.allocated_tokens > quota.monthly_token_limit
+                || (quota.monthly_token_limit > 0
+                  && quota.tokens_used + quota.tokens_reserved >= quota.monthly_token_limit)
+              ) && (
+                <p className="service-quota-warning" role="alert">
+                  项目分配或当月用量已达到/超过个人总额度，个人额度会限制所有项目的实际调用。请查看个人服务页并联系管理员或协调项目额度。
+                </p>
+              )}
+              {isLoadingServices ? (
+                <p className="member-empty" aria-live="polite">正在加载服务额度…</p>
+              ) : serviceQuotas.length === 0 ? (
+                <div className="empty-state service-project-empty">
+                  当前没有可申请的服务额度，请联系管理员开通。<Link to="/account/services">查看我的服务</Link>
+                </div>
+              ) : (
+                <div className="project-service-list">
+                  {serviceQuotas.map((quota) => {
+                    const allocation = projectServices.find((item) => item.service_code === quota.service_code);
+                    const maximum = quota.available_tokens + (allocation?.monthly_token_limit ?? 0);
+                    const isSaving = savingServiceCode === quota.service_code;
+                    return (
+                      <div className="project-service-row" key={quota.service_code}>
+                        <div className="project-service-summary">
+                        <strong>{quota.name}</strong>
+                          <span>
+                            {allocation ? "已开通" : "未申请"} · {quota.monthly_token_limit === 0
+                              ? "个人额度为 0，需联系管理员开通"
+                              : `个人可分配 ${new Intl.NumberFormat("zh-CN").format(maximum)} tokens`}
+                          </span>
+                        </div>
+                        <label className="project-service-limit">
+                          <span>项目月上限</span>
+                          <input
+                            aria-label={`${quota.name} 项目月 token 上限`}
+                            disabled={!allocation && quota.available_tokens < 1}
+                            inputMode="numeric"
+                            min={1}
+                            onChange={(event) => setServiceAllocationInputs((current) => ({
+                              ...current,
+                              [quota.service_code]: event.target.value,
+                            }))}
+                            placeholder="输入 token 数"
+                            type="number"
+                            value={serviceAllocationInputs[quota.service_code] ?? ""}
+                          />
+                        </label>
+                        <button
+                          className="primary-button"
+                          disabled={isSaving || (!allocation && quota.available_tokens < 1)}
+                          onClick={() => void saveProjectService(quota)}
+                          type="button"
+                        >
+                          {isSaving ? "保存中…" : allocation ? "调整额度" : "申请服务"}
+                        </button>
+                        {allocation && (
+                          <small className="project-service-usage">
+                            本月已用 {new Intl.NumberFormat("zh-CN").format(allocation.tokens_used)} · 处理中预留 {new Intl.NumberFormat("zh-CN").format(allocation.tokens_reserved)} tokens
+                          </small>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </section>
           )}
           {canManage && (
             <section className="project-detail-panel" aria-labelledby="project-edit-title">

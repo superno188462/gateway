@@ -35,6 +35,12 @@ class Settings(BaseSettings):
         min_length=32,
         description="用于 API Key 摘要和密文加解密的主密钥；未配置时禁用 Key 功能。",
     )
+    default_llm_monthly_token_limit: int = Field(
+        default=100_000,
+        ge=0,
+        le=2_147_483_647,
+        description="新注册用户默认 LLM 月 token 上限；0 表示不自动授予。",
+    )
     jwt_access_token_expire_minutes: int = Field(default=30, ge=5, le=1440)
 
     @model_validator(mode="after")

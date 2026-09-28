@@ -10,11 +10,14 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from app.application.api_keys import ApiKeyService
 from app.application.auth import AdminBootstrapService, AuthService
+from app.application.llm_gateway import LlmGatewayService
+from app.application.llm_services import ProjectLlmService
 from app.application.projects import ProjectService
 from app.config import Settings
 from app.domain.health import ReadinessProbe
 from app.infrastructure.db.engine import SqlAlchemyReadinessProbe, create_database_engine
 from app.infrastructure.db.models import User
+from app.infrastructure.mock_llm import MockLlmProvider
 from app.security import JwtService, PasswordService
 
 
@@ -36,6 +39,8 @@ class AppContainer:
     auth_service: AuthService | None
     project_service: ProjectService | None
     api_key_service: ApiKeyService | None
+    project_llm_service: ProjectLlmService | None
+    llm_gateway_service: LlmGatewayService | None
 
     @classmethod
     def build(
@@ -59,6 +64,8 @@ class AppContainer:
                 auth_service=None,
                 project_service=None,
                 api_key_service=None,
+                project_llm_service=None,
+                llm_gateway_service=None,
             )
 
         database_engine = create_database_engine(settings.database_url)
@@ -78,13 +85,20 @@ class AppContainer:
                 settings.admin_username,
                 settings.admin_password,
             ),
-            auth_service=AuthService(session_factory, password_service, jwt_service),
+            auth_service=AuthService(
+                session_factory,
+                password_service,
+                jwt_service,
+                {"mock-llm-v1": settings.default_llm_monthly_token_limit},
+            ),
             project_service=ProjectService(session_factory),
             api_key_service=(
                 ApiKeyService(session_factory, settings.api_key_secret_key.get_secret_value())
                 if settings.api_key_secret_key is not None
                 else None
             ),
+            project_llm_service=ProjectLlmService(session_factory),
+            llm_gateway_service=LlmGatewayService(session_factory, MockLlmProvider()),
         )
 
     async def startup(self) -> None:
@@ -148,6 +162,22 @@ def get_api_key_service(request: Request) -> ApiKeyService:
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail={"code": "api_key_unavailable", "message": "请先配置 API_KEY_SECRET_KEY"},
         )
+    return service
+
+
+def get_project_llm_service(request: Request) -> ProjectLlmService:
+    """注入个人服务额度和项目服务分配用例。"""
+    service = get_container(request).project_llm_service
+    if service is None:
+        raise RuntimeError("项目 LLM 服务未注册")
+    return service
+
+
+def get_llm_gateway_service(request: Request) -> LlmGatewayService:
+    """注入 LLM 网关用例。"""
+    service = get_container(request).llm_gateway_service
+    if service is None:
+        raise RuntimeError("LLM 网关服务未注册")
     return service
 
 

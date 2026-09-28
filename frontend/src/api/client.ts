@@ -70,6 +70,29 @@ export type ApiKey = {
   created_at: string;
 };
 
+/** 项目当前已开通的服务额度及 UTC 月度用量。 */
+export type ProjectService = {
+  project_id: string;
+  service_code: string;
+  monthly_token_limit: number;
+  status: "active" | "suspended";
+  period_start: string;
+  tokens_used: number;
+  tokens_reserved: number;
+};
+
+/** 当前用户的服务能力、月度总额度和所有项目汇总用量。 */
+export type UserServiceQuota = {
+  service_code: string;
+  name: string;
+  models: string[];
+  monthly_token_limit: number;
+  allocated_tokens: number;
+  available_tokens: number;
+  tokens_used: number;
+  tokens_reserved: number;
+};
+
 export type CreatedApiKey = ApiKey & { secret: string };
 
 export type ApiError = {
@@ -214,5 +237,39 @@ export const apiClient = {
   revokeProjectApiKey: (token: string, projectId: string, keyId: string) =>
     request<void>(`/admin/v1/projects/${projectId}/keys/${keyId}`, {
       method: "DELETE",
+    }, token),
+  getMyServices: (token: string) =>
+    request<UserServiceQuota[]>("/v1/me/services", {}, token),
+  lookupUserForQuota: (token: string, lookup: { user_id: string } | { username: string }) => {
+    const params = new URLSearchParams(lookup);
+    return request<UserResponse>(`/admin/v1/users/lookup?${params.toString()}`, {}, token);
+  },
+  getUserServicesForAdmin: (token: string, userId: string) =>
+    request<UserServiceQuota[]>(`/admin/v1/users/${userId}/services`, {}, token),
+  setUserServiceQuota: (token: string, userId: string, serviceCode: string, monthlyTokenLimit: number) =>
+    request<UserServiceQuota>(`/admin/v1/users/${userId}/services/${serviceCode}`, {
+      method: "PUT",
+      body: JSON.stringify({ monthly_token_limit: monthlyTokenLimit }),
+    }, token),
+  getProjectServices: (token: string, projectId: string) =>
+    request<ProjectService[]>(`/admin/v1/projects/${projectId}/services`, {}, token),
+  applyProjectService: (
+    token: string,
+    projectId: string,
+    payload: { service_code: string; monthly_token_limit: number },
+  ) =>
+    request<ProjectService>(`/admin/v1/projects/${projectId}/services`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }, token),
+  updateProjectServiceAllocation: (
+    token: string,
+    projectId: string,
+    serviceCode: string,
+    monthlyTokenLimit: number,
+  ) =>
+    request<ProjectService>(`/admin/v1/projects/${projectId}/services/${serviceCode}`, {
+      method: "PATCH",
+      body: JSON.stringify({ monthly_token_limit: monthlyTokenLimit }),
     }, token),
 };
