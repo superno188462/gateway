@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from app.application.auth import AdminBootstrapError, AdminBootstrapService
 from app.bootstrap import create_app
 from app.config import Settings
-from app.infrastructure.db.models import AuthSession, User
+from app.infrastructure.db.models import AuthSession, Project, ProjectMember, User
 from app.security import PasswordService
 
 pytestmark = pytest.mark.integration
@@ -25,6 +25,8 @@ def database_url() -> str:
 
 async def clear_auth_data(factory: async_sessionmaker[AsyncSession]) -> None:
     async with factory.begin() as session:
+        await session.execute(delete(ProjectMember))
+        await session.execute(delete(Project))
         await session.execute(delete(AuthSession))
         await session.execute(delete(User))
 

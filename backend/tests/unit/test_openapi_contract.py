@@ -31,4 +31,5 @@ def test_committed_health_paths_match_generated_openapi() -> None:
     assert committed["info"]["title"] == generated["info"]["title"]
 
     for path, operations in committed["paths"].items():
-        assert set(operations) == set(generated["paths"][path])
+        methods = {key for key in operations if key != "parameters"}
+        assert methods == set(generated["paths"][path])

@@ -9,6 +9,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from app.application.auth import AdminBootstrapService, AuthService
+from app.application.projects import ProjectService
 from app.config import Settings
 from app.domain.health import ReadinessProbe
 from app.infrastructure.db.engine import SqlAlchemyReadinessProbe, create_database_engine
@@ -32,6 +33,7 @@ class AppContainer:
     jwt_service: JwtService
     admin_bootstrap: AdminBootstrapService | None
     auth_service: AuthService | None
+    project_service: ProjectService | None
 
     @classmethod
     def build(
@@ -53,6 +55,7 @@ class AppContainer:
                 ),
                 admin_bootstrap=None,
                 auth_service=None,
+                project_service=None,
             )
 
         database_engine = create_database_engine(settings.database_url)
@@ -73,6 +76,7 @@ class AppContainer:
                 settings.admin_password,
             ),
             auth_service=AuthService(session_factory, password_service, jwt_service),
+            project_service=ProjectService(session_factory),
         )
 
     async def startup(self) -> None:
@@ -115,6 +119,14 @@ def get_auth_service(request: Request) -> AuthService:
     service = get_container(request).auth_service
     if service is None:
         raise RuntimeError("认证服务未注册")
+    return service
+
+
+def get_project_service(request: Request) -> ProjectService:
+    """注入项目服务单例。"""
+    service = get_container(request).project_service
+    if service is None:
+        raise RuntimeError("项目服务未注册")
     return service
 
 

@@ -4,10 +4,11 @@ import { useAuth } from "./auth/useAuth";
 import { HealthPage } from "./pages/HealthPage";
 import { LoginPage } from "./pages/LoginPage";
 import { RegisterPage } from "./pages/RegisterPage";
+import { ProjectsPage } from "./pages/ProjectsPage";
 
 const navigation = [
   { label: "运行状态", to: "/" },
-  { label: "项目", to: "/projects", disabled: true },
+  { label: "项目", to: "/projects" },
   { label: "调用日志", to: "/logs", disabled: true },
 ];
 
@@ -63,6 +64,7 @@ function AppShell() {
         </header>
         <Routes>
           <Route element={<HealthPage />} path="/" />
+          <Route element={<ProjectsPage />} path="/projects" />
           <Route element={<Navigate replace to="/" />} path="*" />
         </Routes>
       </main>

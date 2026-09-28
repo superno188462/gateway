@@ -103,7 +103,140 @@ paths:
                 $ref: "#/components/schemas/UserResponse"
         "401":
           description: 令牌无效或缺失
+  /api/admin/v1/projects:
+    post:
+      operationId: create_project
+      summary: 创建项目
+      tags: [Projects]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProjectCreateRequest"
+      responses:
+        "201":
+          description: 创建成功
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProjectResponse"
+    get:
+      operationId: list_projects
+      summary: 查询可访问项目
+      tags: [Projects]
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: 项目列表
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ProjectResponse"
+  /api/admin/v1/projects/{project_id}:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+    get:
+      operationId: get_project
+      summary: 查看项目
+      tags: [Projects]
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: 项目详情
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProjectResponse"
+    patch:
+      operationId: update_project
+      summary: 更新项目
+      tags: [Projects]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProjectUpdateRequest"
+      responses:
+        "200":
+          description: 更新成功
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProjectResponse"
+  /api/admin/v1/projects/{project_id}/members:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+    get:
+      operationId: list_members
+      summary: 查询项目成员
+      tags: [Projects]
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: 项目成员列表
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ProjectMemberResponse"
+    post:
+      operationId: add_member
+      summary: 添加项目成员
+      tags: [Projects]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProjectMemberRequest"
+      responses:
+        "201":
+          description: 添加成功
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProjectMemberResponse"
+  /api/admin/v1/projects/{project_id}/members/{member_user_id}:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+      - name: member_user_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    delete:
+      operationId: remove_member
+      summary: 移除项目成员
+      tags: [Projects]
+      security:
+        - bearerAuth: []
+      responses:
+        "204":
+          description: 移除成功
 components:
+  parameters:
+    ProjectId:
+      name: project_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
   securitySchemes:
     bearerAuth:
       type: http
@@ -182,3 +315,79 @@ components:
         role:
           type: string
           enum: [admin, user]
+    ProjectCreateRequest:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+        description:
+          type: string
+          maxLength: 2000
+    ProjectUpdateRequest:
+      type: object
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+        description:
+          type: string
+          maxLength: 2000
+        status:
+          type: string
+          enum: [active, inactive]
+    ProjectResponse:
+      type: object
+      required: [id, name, description, status, owner_id, created_at, updated_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        description:
+          type: [string, 'null']
+        status:
+          type: string
+          enum: [active, inactive]
+        owner_id:
+          type: string
+          format: uuid
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    ProjectMemberRequest:
+      type: object
+      required: [user_id, role]
+      properties:
+        user_id:
+          type: string
+          format: uuid
+        role:
+          type: string
+          enum: [editor, viewer]
+    ProjectMemberResponse:
+      type: object
+      required: [project_id, user_id, role, created_at, updated_at]
+      properties:
+        project_id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+          format: uuid
+        role:
+          type: string
+          enum: [owner, editor, viewer]
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time

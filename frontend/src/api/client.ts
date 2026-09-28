@@ -21,6 +21,18 @@ export type UserResponse = {
   role: "admin" | "user";
 };
 
+export type ProjectStatus = "active" | "inactive";
+
+export type Project = {
+  id: string;
+  name: string;
+  description: string | null;
+  status: ProjectStatus;
+  owner_id: string;
+  created_at: string;
+  updated_at: string;
+};
+
 export type ApiError = {
   code?: string;
   message?: string;
@@ -80,4 +92,19 @@ export const apiClient = {
     }),
   getCurrentUser: (token: string) => request<UserResponse>("/v1/auth/me", {}, token),
   logout: (token: string) => request<void>("/v1/auth/logout", { method: "POST" }, token),
+  getProjects: (token: string) => request<Project[]>("/admin/v1/projects", {}, token),
+  createProject: (token: string, payload: { name: string; description?: string }) =>
+    request<Project>("/admin/v1/projects", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }, token),
+  updateProject: (
+    token: string,
+    projectId: string,
+    payload: { name?: string; description?: string; status?: ProjectStatus },
+  ) =>
+    request<Project>(`/admin/v1/projects/${projectId}`, {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    }, token),
 };
