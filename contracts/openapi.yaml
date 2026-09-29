@@ -850,8 +850,8 @@ paths:
     post:
       tags:
       - LLM Gateway
-      summary: 调用 LLM Mock Chat Completions
-      description: 通过项目 API Key 自动解析项目并执行额度校验；请求正文不被保存。
+      summary: 调用 OpenAI 兼容 Chat Completions 网关
+      description: 通过项目 API Key 自动解析项目并执行额度校验；兼容参数透传到供应商，请求正文不被保存。stream 当前由网关缓冲上游结果后编码为 SSE。
       operationId: chat_completions_v1_chat_completions_post
       requestBody:
         content:
@@ -1292,12 +1292,116 @@ components:
           minItems: 1
           title: Messages
         max_tokens:
-          type: integer
-          maximum: 4096.0
-          minimum: 1.0
+          anyOf:
+          - type: integer
+            maximum: 4096.0
+            minimum: 1.0
+          - type: 'null'
           title: Max Tokens
-          description: 本请求生成上限，也用于额度预留。
-          default: 256
+          description: 兼容旧参数并用于额度预留。
+        max_completion_tokens:
+          anyOf:
+          - type: integer
+            maximum: 4096.0
+            minimum: 1.0
+          - type: 'null'
+          title: Max Completion Tokens
+          description: 生成 token 上限，也用于额度预留。
+        temperature:
+          anyOf:
+          - type: number
+            maximum: 2.0
+            minimum: 0.0
+          - type: 'null'
+          title: Temperature
+          description: 采样温度；由上游模型决定是否支持。
+        top_p:
+          anyOf:
+          - type: number
+            exclusiveMinimum: 0.0
+            maximum: 1.0
+          - type: 'null'
+          title: Top P
+          description: 核采样参数；由上游模型决定是否支持。
+        presence_penalty:
+          anyOf:
+          - type: number
+            maximum: 2.0
+            minimum: -2.0
+          - type: 'null'
+          title: Presence Penalty
+        frequency_penalty:
+          anyOf:
+          - type: number
+            maximum: 2.0
+            minimum: -2.0
+          - type: 'null'
+          title: Frequency Penalty
+        stop:
+          anyOf:
+          - type: string
+          - items:
+              type: string
+            type: array
+          - type: 'null'
+          title: Stop
+        response_format:
+          anyOf:
+          - additionalProperties: true
+            type: object
+          - type: 'null'
+          title: Response Format
+          description: 按原样转发 JSON 输出模式等配置。
+        tools:
+          anyOf:
+          - items:
+              additionalProperties: true
+              type: object
+            type: array
+          - type: 'null'
+          title: Tools
+          description: 按原样转发 OpenAI function tools 定义。
+        tool_choice:
+          anyOf:
+          - type: string
+          - additionalProperties: true
+            type: object
+          - type: 'null'
+          title: Tool Choice
+        parallel_tool_calls:
+          anyOf:
+          - type: boolean
+          - type: 'null'
+          title: Parallel Tool Calls
+        logit_bias:
+          anyOf:
+          - additionalProperties:
+              type: number
+            type: object
+          - type: 'null'
+          title: Logit Bias
+        logprobs:
+          anyOf:
+          - type: boolean
+          - type: 'null'
+          title: Logprobs
+        top_logprobs:
+          anyOf:
+          - type: integer
+            maximum: 20.0
+            minimum: 0.0
+          - type: 'null'
+          title: Top Logprobs
+        seed:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Seed
+        user:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: User
         stream:
           type: boolean
           title: Stream
@@ -1305,40 +1409,53 @@ components:
           default: false
         stream_options:
           anyOf:
-          - additionalProperties:
-              type: boolean
-            type: object
+          - $ref: '#/components/schemas/StreamOptionsRequest'
           - type: 'null'
           title: Stream Options
           description: 兼容 OpenAI 的 stream_options；支持 include_usage。
+        n:
+          anyOf:
+          - type: integer
+            maximum: 8.0
+            minimum: 1.0
+          - type: 'null'
+          title: N
+          description: 生成选择数量；最多 8 个。
       type: object
+      additionalProperties: true
       required:
       - model
       - messages
       title: ChatCompletionRequest
-      description: LLM Mock 聊天请求。
+      description: OpenAI Chat Completions 请求；未单独声明的供应商扩展字段也会透传。
+    StreamOptionsRequest:
+      properties:
+        include_usage:
+          anyOf:
+          - type: boolean
+          - type: 'null'
+          title: Include Usage
+          description: 为 true 时在 SSE 结束前发送 token 用量 chunk。
+      additionalProperties: false
+      type: object
+      title: StreamOptionsRequest
+      description: 网关支持的流式选项；供应商标准中尚未实现的选项会被拒绝。
     ChatMessageRequest:
       properties:
         role:
           type: string
-          enum:
-          - system
-          - user
-          - assistant
           title: Role
-          description: 消息角色。
+          description: 消息角色；支持供应商兼容的 developer、tool 等角色。
         content:
-          type: string
-          maxLength: 100000
-          minLength: 1
+          description: 文本、多模态数组或供应商兼容内容。
           title: Content
-          description: 文本内容；服务端不持久化正文。
+      additionalProperties: true
       type: object
       required:
       - role
       - content
       title: ChatMessageRequest
-      description: 兼容 OpenAI chat completions 的单条文本消息。
+      description: 兼容 Chat Completions 的单条消息；服务端不持久化正文。
     CreateModelRequest:
       properties:
         model_code:

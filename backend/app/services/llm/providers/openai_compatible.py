@@ -5,7 +5,12 @@ from typing import cast
 import httpx
 
 from app.services.llm.configuration import LlmConfigurationService, ResolvedLlmModel
-from app.services.llm.domain import ChatMessage, LlmProvider, ProviderCompletion
+from app.services.llm.domain import (
+    ChatMessage,
+    LlmProvider,
+    ProviderCompletion,
+    ProviderParameterError,
+)
 from app.services.llm.providers.mock import MockLlmProvider, estimate_tokens
 
 
@@ -31,11 +36,15 @@ class ConfiguredLlmProvider(LlmProvider):
         return model in await self._configuration.active_model_codes()
 
     async def complete(
-        self, model: str, messages: list[ChatMessage], max_tokens: int
+        self,
+        model: str,
+        messages: list[ChatMessage],
+        max_tokens: int,
+        parameters: dict[str, object] | None = None,
     ) -> ProviderCompletion:
-        """调用指定兼容端点并归一化 completion 与 token 用量。"""
+        """透传兼容参数并保留供应商响应字段，同时抽取额度结算用量。"""
         if model == "mock-chat":
-            return await self._mock.complete(model, messages, max_tokens)
+            return await self._mock.complete(model, messages, max_tokens, parameters)
         if self._configuration is None:
             raise RuntimeError("尚未配置 LLM_PROVIDER_SECRET_KEY")
         routes = await self._configuration.resolve_model_pool(model)
@@ -49,20 +58,31 @@ class ConfiguredLlmProvider(LlmProvider):
         last_error: Exception | None = None
         for resolved in candidates:
             try:
-                return await self._complete_with_route(resolved, messages, max_tokens)
+                return await self._complete_with_route(
+                    resolved, messages, max_tokens, parameters or {}
+                )
             except httpx.HTTPStatusError as error:
                 if error.response.status_code < 500 and error.response.status_code not in {
+                    400,
                     401,
                     403,
                     404,
                     408,
                     409,
                     429,
+                    422,
                 }:
                     raise
                 last_error = error
             except httpx.RequestError as error:
                 last_error = error
+        if isinstance(last_error, httpx.HTTPStatusError) and last_error.response.status_code in {
+            400,
+            422,
+        }:
+            raise ProviderParameterError(
+                "上游拒绝了请求参数或当前模型不支持这些参数"
+            ) from last_error
         raise RuntimeError("LLM 上游连接池中的可用连接均调用失败") from last_error
 
     async def _complete_with_route(
@@ -70,16 +90,22 @@ class ConfiguredLlmProvider(LlmProvider):
         resolved: ResolvedLlmModel,
         messages: list[ChatMessage],
         max_tokens: int,
+        parameters: dict[str, object],
     ) -> ProviderCompletion:
-        """调用池中的一个上游连接并归一化响应。"""
+        """调用上游；仅覆盖网关公开模型名，其余请求参数保持不变。"""
+        payload = dict(parameters)
+        payload.pop("model", None)
+        payload.pop("messages", None)
+        payload.pop("stream", None)
+        payload.pop("stream_options", None)
+        if not payload.get("max_tokens") and not payload.get("max_completion_tokens"):
+            payload["max_tokens"] = max_tokens
+        payload["model"] = resolved.upstream_model
+        payload["messages"] = [item.as_payload() for item in messages]
         response = await self._http_client.post(
             f"{resolved.base_url}/chat/completions",
             headers={"Authorization": f"Bearer {resolved.api_key}"},
-            json={
-                "model": resolved.upstream_model,
-                "messages": [{"role": item.role, "content": item.content} for item in messages],
-                "max_tokens": max_tokens,
-            },
+            json=payload,
         )
         response.raise_for_status()
         payload = cast(dict[str, object], response.json())
@@ -87,12 +113,12 @@ class ConfiguredLlmProvider(LlmProvider):
         message = cast(dict[str, object], choices[0]["message"])
         content = message.get("content")
         if not isinstance(content, str):
-            raise RuntimeError("上游响应未包含文本内容")
+            content = ""
         usage = cast(dict[str, object], payload.get("usage") or {})
         prompt_tokens = usage.get("prompt_tokens")
         completion_tokens = usage.get("completion_tokens")
         if not isinstance(prompt_tokens, int):
-            prompt_tokens = estimate_tokens("\n".join(item.content for item in messages))
+            prompt_tokens = estimate_tokens("\n".join(str(item.content) for item in messages))
         if not isinstance(completion_tokens, int):
             completion_tokens = estimate_tokens(content)
         finish_reason = choices[0].get("finish_reason")
@@ -101,4 +127,5 @@ class ConfiguredLlmProvider(LlmProvider):
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
             finish_reason=finish_reason if isinstance(finish_reason, str) else "stop",
+            raw_response=payload,
         )

@@ -13,12 +13,19 @@ class MockLlmProvider:
         return model == "mock-chat"
 
     async def complete(
-        self, model: str, messages: list[ChatMessage], max_tokens: int
+        self,
+        model: str,
+        messages: list[ChatMessage],
+        max_tokens: int,
+        parameters: dict[str, object] | None = None,
     ) -> ProviderCompletion:
         """回复最后一条用户消息的摘要式 Mock 文本。"""
-        del model
+        del model, parameters
         prompt_text = "\n".join(f"{message.role}: {message.content}" for message in messages)
-        latest_user = next((m.content for m in reversed(messages) if m.role == "user"), "")
+        latest_user_value = next((m.content for m in reversed(messages) if m.role == "user"), "")
+        latest_user = (
+            latest_user_value if isinstance(latest_user_value, str) else str(latest_user_value)
+        )
         content = f"[Mock LLM] 已收到你的消息：{latest_user[:500]}" or "[Mock LLM] 请求已收到。"
         completion_tokens = min(estimate_tokens(content), max_tokens)
         content = truncate_to_tokens(content, completion_tokens)

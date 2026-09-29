@@ -1,5 +1,6 @@
 """LLM 网关用例：授权、额度预留、Provider 调用、结算和无正文用量记录。"""
 
+import json
 import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -18,7 +19,12 @@ from app.infrastructure.db.models import (
     User,
     UserServiceQuota,
 )
-from app.services.llm.domain import ChatMessage, LlmProvider, ProviderCompletion
+from app.services.llm.domain import (
+    ChatMessage,
+    LlmProvider,
+    ProviderCompletion,
+    ProviderParameterError,
+)
 from app.services.llm.providers.mock import estimate_tokens
 
 
@@ -62,6 +68,7 @@ class LlmGatewayService:
         model: str,
         messages: list[ChatMessage],
         max_tokens: int,
+        parameters: dict[str, object] | None = None,
     ) -> GatewayCompletion:
         """预留最大用量后调用 Provider，成功记实际用量，失败释放预留。"""
         request_id = f"req_{uuid4().hex}"
@@ -79,12 +86,32 @@ class LlmGatewayService:
                 "model_not_found",
             )
             raise GatewayRequestError("model_not_found", "请求的模型不存在", 404, request_id)
-        prompt_tokens = estimate_tokens("\n".join(f"{m.role}: {m.content}" for m in messages))
-        reservation = prompt_tokens + max_tokens
+        prompt_tokens = estimate_tokens(
+            json.dumps([message.as_payload() for message in messages], ensure_ascii=False)
+        )
+        count = (parameters or {}).get("n", 1)
+        choice_count = count if isinstance(count, int) and not isinstance(count, bool) else 1
+        reservation = prompt_tokens + max_tokens * choice_count
         period_start = self._period_start()
         await self._reserve(api_key, request_id, model, period_start, reservation, started)
         try:
-            completion = await self._provider.complete(model, messages, max_tokens)
+            completion = await self._provider.complete(model, messages, max_tokens, parameters)
+        except ProviderParameterError as error:
+            await self._release_and_log(
+                api_key,
+                request_id,
+                model,
+                period_start,
+                reservation,
+                self._latency(started),
+                error_code="upstream_invalid_parameters",
+            )
+            raise GatewayRequestError(
+                "upstream_invalid_parameters",
+                "上游拒绝了请求参数；请检查参数格式及当前模型的支持情况",
+                400,
+                request_id,
+            ) from error
         except Exception as error:
             await self._release_and_log(
                 api_key, request_id, model, period_start, reservation, self._latency(started)
@@ -309,6 +336,7 @@ class LlmGatewayService:
         period_start: datetime,
         reservation: int,
         latency_ms: int,
+        error_code: str = "provider_error",
     ) -> None:
         async with self._session_factory.begin() as session:
             bucket = await session.scalar(
@@ -323,7 +351,7 @@ class LlmGatewayService:
             if bucket is not None:
                 bucket.tokens_reserved = max(0, bucket.tokens_reserved - reservation)
             await self._add_log(
-                session, request_id, api_key, model, "failed", 0, 0, 0, latency_ms, "provider_error"
+                session, request_id, api_key, model, "failed", 0, 0, 0, latency_ms, error_code
             )
 
     async def _write_request(

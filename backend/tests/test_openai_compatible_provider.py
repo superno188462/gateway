@@ -6,7 +6,7 @@ import httpx
 import pytest
 
 from app.services.llm.configuration import ResolvedLlmModel
-from app.services.llm.domain import ChatMessage
+from app.services.llm.domain import ChatMessage, ProviderParameterError
 from app.services.llm.providers.openai_compatible import ConfiguredLlmProvider
 
 
@@ -57,6 +57,80 @@ async def test_openai_compatible_provider_maps_model_and_normalizes_usage() -> N
     assert result.prompt_tokens == 3
     assert result.completion_tokens == 2
     assert result.finish_reason == "stop"
+    assert result.raw_response is not None
+    assert result.raw_response["usage"] == {"prompt_tokens": 3, "completion_tokens": 2}
+
+
+@pytest.mark.asyncio
+async def test_provider_forwards_standard_and_vendor_fields_and_preserves_tool_response() -> None:
+    seen: dict[str, object] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["payload"] = json.loads(request.read())
+        return httpx.Response(
+            200,
+            json={
+                "id": "upstream-id",
+                "object": "chat.completion",
+                "model": "vendor-chat-v2",
+                "choices": [
+                    {
+                        "index": 0,
+                        "message": {
+                            "role": "assistant",
+                            "content": None,
+                            "tool_calls": [
+                                {
+                                    "id": "call_1",
+                                    "type": "function",
+                                    "function": {"name": "lookup", "arguments": "{}"},
+                                }
+                            ],
+                        },
+                        "finish_reason": "tool_calls",
+                    }
+                ],
+                "usage": {"prompt_tokens": 4, "completion_tokens": 5, "total_tokens": 9},
+                "vendor_metadata": {"region": "test"},
+            },
+        )
+
+    options = {
+        "temperature": 0.2,
+        "top_p": 0.8,
+        "response_format": {"type": "json_object"},
+        "tools": [{"type": "function", "function": {"name": "lookup", "parameters": {}}}],
+        "tool_choice": "auto",
+        "vendor_extension": {"trace": True},
+    }
+    messages = [ChatMessage("user", "find it", {"name": "caller"})]
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        provider = ConfiguredLlmProvider(FakeConfiguration(), client)  # type: ignore[arg-type]
+        result = await provider.complete("public-chat", messages, 30, options)
+
+    payload = seen["payload"]
+    assert isinstance(payload, dict)
+    assert payload["temperature"] == 0.2
+    assert payload["top_p"] == 0.8
+    assert payload["response_format"] == options["response_format"]
+    assert payload["tools"] == options["tools"]
+    assert payload["tool_choice"] == "auto"
+    assert payload["vendor_extension"] == {"trace": True}
+    assert payload["messages"] == [{"role": "user", "content": "find it", "name": "caller"}]
+    assert result.content == ""
+    assert result.finish_reason == "tool_calls"
+    assert result.raw_response is not None
+    assert result.raw_response["vendor_metadata"] == {"region": "test"}
+
+
+@pytest.mark.asyncio
+async def test_provider_reports_unsupported_parameter_status() -> None:
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda _: httpx.Response(400, json={"error": "unsupported"}))
+    ) as client:
+        provider = ConfiguredLlmProvider(FakeConfiguration(), client)  # type: ignore[arg-type]
+        with pytest.raises(ProviderParameterError):
+            await provider.complete("public-chat", [ChatMessage("user", "hi")], 30)
 
 
 @pytest.mark.asyncio

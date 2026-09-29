@@ -85,11 +85,12 @@ app/
 └── container.py              # 服务目录与实现的组合根 / DI 注册
 ```
 
-- `services/llm/domain.py` 定义 `LlmProvider` Port 和厂商无关的消息/结果类型；`services/llm/providers/` 实现具体 Provider，当前只有确定性 Mock。
+- `services/llm/domain.py` 定义 `LlmProvider` Port 和厂商无关的消息/结果类型；`services/llm/providers/` 提供确定性 Mock 和支持 OpenAI 兼容协议的可配置上游 Provider。
 - 管理员可通过 `services/llm/configuration.py` 的 API 配置多个 OpenAI 兼容上游连接，并将网关公开模型代码映射到上游模型名；同一公开模型可绑定多个连接组成池。供应商密钥以 `LLM_PROVIDER_SECRET_KEY` 派生的 Fernet 密钥加密后写入数据库，API 只返回 `api_key_configured`。
 - `services/llm/providers/openai_compatible.py` 按公开模型代码轮询启用连接，并在网络错误、限流或上游服务错误时尝试其他连接，每次最多尝试 3 个；第三方 URL 必须为 HTTPS，本机 HTTP 仅供开发调试。
 - 管理员可以请求兼容的 `/models` 测试上游连通性，数据库仅保存测试时间、成功状态及安全摘要，不保存供应商原始响应。
 - `services/llm/application.py` 校验服务开通、预留月额度、调用 Provider、结算用量和记录请求；`services/llm/api.py` 提供 OpenAI 风格聊天 API。
+- 网关保留并透传 Chat Completions 标准字段及未声明的 JSON 扩展字段；只重写公开 `model` 到供应商模型名，并替换鉴权。供应商拒绝参数时返回可诊断的安全错误；响应保留供应商兼容字段，但请求正文不入库。
 - `service_management/application.py` 通过容器注入的服务目录管理项目申请、额度和用量；`service_management/api.py` 暴露现有服务目录、订阅、申请和额度 API。
 - 现有 HTTP 路径和服务目录行为保持兼容。添加新服务时，在 `services/<name>/` 实现模块，并在组合根注册对应目录项；服务管理代码不依赖某个具体 Provider。
 - 调用方使用 `Authorization: Bearer <项目 API Key>`。API Key 服务解析项目 ID，客户端不传项目 ID；认证后的项目必须已有对应服务订阅。

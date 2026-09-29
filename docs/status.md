@@ -144,6 +144,8 @@
 - 新增迁移 `20260928_0011_llm_provider_configs` 与 `20260929_0012_llm_provider_pools`：供应商连接保存名称、Base URL、密文 API Key 和最近连通性测试状态；模型映射允许同一公开模型名关联多个上游连接。
 - 管理员 API 支持连接和模型映射的增删改、启用/停用；连通性测试使用该连接已启用的上游模型发送最小 `/chat/completions` 请求，不要求供应商实现 `/models`；API 只返回 Key 是否已配置和测试摘要。
 - LLM 网关按公开模型名轮询连接池；连接异常、限流和上游服务错误时切换其他连接，最多尝试 3 个。单一连接仍然可用，内置 `mock-chat` 行为不变。
+- Chat Completions 网关保留并透传标准采样参数、tools、response_format 和未声明扩展字段；供应商兼容响应字段（含工具调用结果）原样保留，公开响应中的 model 仍使用网关模型名。上游以 400/422 拒绝参数时返回清晰的参数错误，不记正文。
+- `stream_options.include_usage` 可用；未实现的 stream option 返回 422，不静默丢弃。当前 `stream: true` 会先等上游完整响应，再由网关编码 SSE，尚未实现上游实时 SSE 的端到端透传。
 - 上游 API Key 以 `LLM_PROVIDER_SECRET_KEY` 加密；第三方 URL 只允许 HTTPS，本机调试允许 loopback HTTP。
 - 已对获准测试库运行 `uv run alembic upgrade head`，当前版本 `20260929_0012 (head)`；集成测试覆盖多连接同模型、密文存储、模型池解析和连通性测试。
 - 管理员前端入口为 `/admin/llm/providers`，支持创建/修改/删除连接、Key 轮换、连通性测试、模型映射维护和连接池概览；密钥不会从服务端读回。
