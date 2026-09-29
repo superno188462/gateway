@@ -24,7 +24,7 @@ function AppShell() {
   const pageTitle = location.pathname === "/account/services"
     ? "我的服务"
     : location.pathname === "/admin/llm/providers"
-      ? "LLM 供应商"
+      ? "LLM API"
       : location.pathname === "/projects/new"
     ? "创建项目"
     : location.pathname.endsWith("/keys")
@@ -68,7 +68,7 @@ function AppShell() {
               className={({ isActive }) => `nav-item${isActive ? " nav-item-active" : ""}`}
               to="/admin/llm/providers"
             >
-              LLM 供应商
+              LLM API
             </NavLink>
           )}
         </nav>

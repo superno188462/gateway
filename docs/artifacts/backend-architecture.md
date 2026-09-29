@@ -86,10 +86,11 @@ app/
 ```
 
 - `services/llm/domain.py` 定义 `LlmProvider` Port 和厂商无关的消息/结果类型；`services/llm/providers/` 提供确定性 Mock 和支持 OpenAI 兼容协议的可配置上游 Provider。
-- 管理员可通过 `services/llm/configuration.py` 的 API 配置多个 OpenAI 兼容上游连接；连接可配置共享路由前缀，`volc/model` 只会调用 `volc` 组并向上游传 `model`，未带前缀时进入全局连接池。组内和全局连接都按优先级从小到大排序。供应商密钥以 `LLM_PROVIDER_SECRET_KEY` 派生的 Fernet 密钥加密后写入数据库，API 只返回 `api_key_configured`。
+- 管理员可通过 `services/llm/configuration.py` 的 API 配置多个 OpenAI 兼容上游连接；连接可配置共享路由前缀，`volc/model` 只会调用 `volc` 组并向上游传 `model`，未带前缀时进入全局连接池。组内和全局连接都按优先级从小到大排序。供应商密钥以 `LLM_PROVIDER_SECRET_KEY` 派生的 Fernet 密钥加密后写入数据库；管理员专用列表接口会解密返回，普通用户接口不返回密钥。
+- 同一 LLM API 组可为共享供应商名、连接名、路由前缀和 Base URL 添加多个 API Key；每个密钥作为独立连接凭据保存、测试和启停。
 - `services/llm/providers/openai_compatible.py` 按优先级依次调用启用连接，在网络错误、400/401/403/404/408/409/422/429 或 5xx 时尝试其他连接；第三方 URL 必须为 HTTPS，本机 HTTP 仅供开发调试。
 - 管理员可以请求兼容的 `/models` 测试上游连通性，数据库仅保存测试时间、成功状态及安全摘要，不保存供应商原始响应。
-- 登录用户通过 `GET /api/v1/llm/provider-catalog` 查看启用的默认池和路由前缀组、管理员配置的供应商显示名及连接数量；公开目录不含上游 URL、密钥或优先级。
+- 登录用户通过 `GET /api/v1/llm/provider-catalog` 查看启用的默认池和路由前缀组、去重的供应商显示名及连接数量；公开目录不含连接名、上游 URL、密钥或优先级。
 - `services/llm/application.py` 校验服务开通、预留月额度、调用 Provider、结算用量和记录请求；`services/llm/api.py` 提供 OpenAI 风格聊天 API。
 - 网关保留并透传 Chat Completions 标准字段及未声明的 JSON 扩展字段；只重写公开 `model` 到供应商模型名，并替换鉴权。供应商拒绝参数时返回可诊断的安全错误；响应保留供应商兼容字段，但请求正文不入库。
 - `service_management/application.py` 通过容器注入的服务目录管理项目申请、额度和用量；`service_management/api.py` 暴露现有服务目录、订阅、申请和额度 API。

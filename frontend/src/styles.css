@@ -262,7 +262,14 @@ h2 { font-size: 28px; letter-spacing: -.03em; }
 .llm-feedback { margin: 18px 0 0; }
 .llm-provider-create { margin-top: 24px; }
 .llm-provider-create > div:first-child p, .llm-provider-list-heading p { margin-top: 6px; color: #8490a3; font-size: 12px; line-height: 1.55; }
-.llm-provider-form-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)) auto; align-items: end; gap: 14px; margin-top: 18px; }
+.llm-provider-form-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); align-items: end; gap: 14px; margin-top: 18px; }
+.llm-import-field { display: grid; gap: 8px; margin-top: 16px; }
+.llm-import-field textarea { width: 100%; min-height: 112px; padding: 12px 14px; resize: vertical; border: 1px solid #d8e0ec; border-radius: 9px; color: #27354a; background: #fff; font: 12px/1.65 ui-monospace, SFMono-Regular, Consolas, monospace; }
+.llm-import-actions { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin-top: 12px; }
+.llm-import-actions > span { color: #8490a3; font-size: 11px; }
+.llm-import-results { display: grid; gap: 5px; margin: 12px 0 0; padding-left: 20px; font-size: 11px; }
+.llm-import-success { color: #187c5b; }
+.llm-import-failure { color: #a23f48; }
 .llm-submit { min-height: 44px; white-space: nowrap; }
 .llm-provider-url code { color: #37506e; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 12px; overflow-wrap: anywhere; }
 .llm-provider-list-heading { display: flex; align-items: center; justify-content: space-between; gap: 18px; }
@@ -271,12 +278,22 @@ h2 { font-size: 28px; letter-spacing: -.03em; }
 .llm-provider-list-heading { margin-top: 30px; }
 .llm-provider-list { display: grid; gap: 16px; margin-top: 14px; }
 .llm-provider-card { min-width: 0; padding: 20px; }
+.llm-provider-group-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 22px; padding-bottom: 14px; border-bottom: 1px solid #edf0f5; }
+.llm-api-key-list { display: grid; }
+.llm-api-key-item { min-width: 0; padding: 15px 0; border-bottom: 1px solid #edf0f5; }
+.llm-api-key-item:last-child { padding-bottom: 0; border-bottom: 0; }
+.llm-api-key-heading { display: flex; align-items: center; justify-content: space-between; gap: 14px; }
+.llm-api-key-secret { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.llm-api-key-secret > strong { flex: 0 0 auto; color: #27354a; font-size: 12px; }
+.llm-api-key-secret code { min-width: 0; padding: 8px 10px; overflow-wrap: anywhere; border: 1px solid #e5ebf2; border-radius: 7px; color: #37506e; background: #fbfcfe; font: 11px/1.5 ui-monospace, SFMono-Regular, Consolas, monospace; }
+.llm-api-key-secret .secondary-button { flex: 0 0 auto; min-height: 32px; padding: 6px 9px; font-size: 11px; }
 .llm-provider-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 22px; }
 .llm-provider-title { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
 .llm-provider-title h3 { font-size: 16px; }
 .llm-provider-url { margin-top: 8px !important; overflow-wrap: anywhere; }
 .llm-provider-actions { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 8px; }
 .llm-provider-actions .secondary-button, .llm-provider-actions .danger-button, .llm-model-row .secondary-button, .llm-model-row .danger-button { min-height: 34px; }
+.llm-provider-actions .secondary-button:disabled { cursor: not-allowed; }
 .llm-key-state { margin-right: 5px; color: #748198; font-size: 11px; white-space: nowrap; }
 .danger-button { padding: 8px 11px; border: 1px solid #f0c8ca; border-radius: 8px; color: #a3444d; background: #fff; cursor: pointer; font-size: 12px; font-weight: 650; }
 .danger-button:hover { border-color: #dc9da1; background: #fff7f7; }
@@ -325,7 +342,9 @@ h2 { font-size: 28px; letter-spacing: -.03em; }
   .login-brand { margin-bottom: 38px; }
   .user-badge { display: none; }
   .llm-provider-form-grid, .llm-provider-edit { grid-template-columns: minmax(0, 1fr); }
+  .llm-import-actions { align-items: stretch; flex-direction: column; }
   .llm-provider-heading { align-items: stretch; flex-direction: column; }
+  .llm-api-key-heading, .llm-api-key-secret { align-items: stretch; flex-direction: column; }
   .llm-provider-actions { justify-content: flex-start; }
   .llm-key-state { width: 100%; }
   .llm-provider-list-heading { align-items: flex-start; }

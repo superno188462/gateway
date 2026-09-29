@@ -147,8 +147,8 @@ export function MyServicesPage() {
               {providerCatalog.groups.map((group) => (
                 <div className="service-route-item" key={group.prefix ?? "default"}>
                   <code>{group.prefix ?? "默认池"}</code>
-                  {group.providers?.length ? (
-                    <span>供应商：{group.providers.join("、")}</span>
+                  {group.suppliers?.length ? (
+                    <span>供应商：{group.suppliers.join("、")}</span>
                   ) : (
                     <span>供应商名称暂不可用，请重启后端服务后刷新。</span>
                   )}

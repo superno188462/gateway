@@ -63,6 +63,7 @@ async def test_provider_credentials_are_encrypted_and_model_is_forwarded_directl
         assert configured.last_test_success is True
         assert configured.last_test_message == "连接成功"
         assert test_result.success is True
+        assert configured.api_key == raw_api_key
         assert raw_api_key not in repr(configured)
         assert configured.route_prefix == "test-volc"
         assert len(resolved_pool) >= 2

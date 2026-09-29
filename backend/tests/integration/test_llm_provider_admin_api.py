@@ -24,11 +24,12 @@ async def test_provider_admin_http_endpoints_and_permissions() -> None:
     engine = create_async_engine(database_url)
     factory = async_sessionmaker(engine, expire_on_commit=False)
     jwt_secret = "llm-provider-admin-api-test-jwt-secret-32chars"
-    provider_secret = "llm-provider-admin-api-test-encryption-secret"
+    provider_secret = Settings().llm_provider_secret_key
+    assert provider_secret is not None
     settings = Settings(
         database_url=database_url,
         jwt_secret_key=jwt_secret,
-        llm_provider_secret_key=provider_secret,
+        llm_provider_secret_key=provider_secret.get_secret_value(),
         _env_file=None,
     )
     async with factory() as session:
@@ -85,6 +86,7 @@ async def test_provider_admin_http_endpoints_and_permissions() -> None:
     created_provider_ids: list[UUID] = []
     test_prefix = f"test-volc-{secrets.token_hex(4)}"
     first_name = f"api-test-a-{secrets.token_hex(5)}"
+    supplier_name = f"供测试-{secrets.token_hex(4)}"
     try:
         admin_headers = {"Authorization": f"Bearer {admin_token}"}
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
@@ -101,6 +103,7 @@ async def test_provider_admin_http_endpoints_and_permissions() -> None:
                 headers=admin_headers,
                 json={
                     "name": first_name,
+                    "supplier_name": supplier_name,
                     "route_prefix": test_prefix,
                     "base_url": "https://provider-a.example.test/v1",
                     "api_key": "secret-provider-a",
@@ -109,10 +112,25 @@ async def test_provider_admin_http_endpoints_and_permissions() -> None:
             assert first.status_code == 201
             assert first.json()["api_key_configured"] is True
             assert first.json()["route_prefix"] == test_prefix
-            assert "secret-provider-a" not in first.text
-            assert "api_key" not in first.json()
+            assert first.json()["api_key"] == "secret-provider-a"
             first_id = UUID(first.json()["id"])
             created_provider_ids.append(first_id)
+
+            duplicate = await client.post(
+                "/api/admin/v1/llm/providers",
+                headers=admin_headers,
+                json={
+                    "name": first_name,
+                    "supplier_name": supplier_name,
+                    "route_prefix": None,
+                    "base_url": "https://provider-a.example.test/v1",
+                    "api_key": "secret-provider-a",
+                },
+            )
+            assert duplicate.status_code == 409
+            assert duplicate.json()["detail"]["message"] == (
+                "仓库中已存在相同 Base URL 和 API Key 的 API"
+            )
 
             catalog = await client.get(
                 "/api/v1/llm/provider-catalog",
@@ -123,10 +141,11 @@ async def test_provider_admin_http_endpoints_and_permissions() -> None:
                 group for group in catalog.json()["groups"] if group["prefix"] == test_prefix
             )
             assert prefix_group["connection_count"] == 1
-            assert prefix_group["providers"] == [first_name]
+            assert prefix_group["suppliers"] == [supplier_name]
             assert "base_url" not in catalog.text
             assert "priority" not in catalog.text
-            assert "api-test-a" in catalog.text
+            assert supplier_name in catalog.text
+            assert first_name not in catalog.text
             assert "secret-provider-a" not in catalog.text
 
             tested = await client.post(
@@ -138,24 +157,32 @@ async def test_provider_admin_http_endpoints_and_permissions() -> None:
             assert tested.json()["success"] is True
             assert tested.json()["message"] == "连接成功"
 
-            second_name = f"api-test-b-{secrets.token_hex(5)}"
             second = await client.post(
                 "/api/admin/v1/llm/providers",
                 headers=admin_headers,
                 json={
-                    "name": second_name,
-                    "base_url": "https://provider-b.example.test/v1",
+                    "name": first_name,
+                    "supplier_name": supplier_name,
+                    "route_prefix": test_prefix,
+                    "base_url": "https://provider-a.example.test/v1",
                     "api_key": "secret-provider-b",
                 },
             )
             assert second.status_code == 201
             second_id = UUID(second.json()["id"])
             created_provider_ids.append(second_id)
+            second_tested = await client.post(
+                f"/api/admin/v1/llm/providers/{second_id}/test",
+                headers=admin_headers,
+                json={"model": "vendor-model-a"},
+            )
+            assert second_tested.status_code == 200
+            assert second_tested.json()["success"] is True
             catalog = await client.get("/api/v1/llm/provider-catalog", headers=admin_headers)
             assert catalog.status_code == 200
             groups = {group["prefix"]: group for group in catalog.json()["groups"]}
-            assert groups[test_prefix]["connection_count"] == 1
-            assert second_name in groups[None]["providers"]
+            assert groups[test_prefix]["connection_count"] == 2
+            assert groups[test_prefix]["suppliers"] == [supplier_name]
             prioritized = await client.patch(
                 f"/api/admin/v1/llm/providers/{second_id}",
                 headers=admin_headers,
@@ -172,8 +199,9 @@ async def test_provider_admin_http_endpoints_and_permissions() -> None:
             first_info = next(item for item in providers.json() if item["id"] == str(first_id))
             assert first_info["last_test_success"] is True
             assert first_info["priority"] == 100
-            assert "secret-provider-a" not in providers.text
-            assert requests == ["/v1/chat/completions"]
+            assert first_info["api_key"] == "secret-provider-a"
+            assert "secret-provider-b" in providers.text
+            assert requests == ["/v1/chat/completions", "/v1/chat/completions"]
     finally:
         if container.llm_configuration_service is not None:
             for provider_id in created_provider_ids:

@@ -99,11 +99,13 @@ export type CreatedApiKey = ApiKey & { secret: string };
 export type LlmProvider = {
   id: string;
   name: string;
+  supplier_name: string;
   route_prefix: string | null;
   base_url: string;
   status: "active" | "disabled";
   priority: number;
   api_key_configured: boolean;
+  api_key: string | null;
   last_tested_at: string | null;
   last_test_success: boolean | null;
   last_test_message: string | null;
@@ -117,7 +119,7 @@ export type LlmProviderTestResult = {
 
 /** 用户可见的启用模型路由组；不包含上游连接详情。 */
 export type LlmProviderCatalog = {
-  groups: Array<{ prefix: string | null; providers?: string[]; connection_count: number }>;
+  groups: Array<{ prefix: string | null; suppliers?: string[]; connection_count: number }>;
 };
 
 export type ApiError = {
@@ -303,7 +305,7 @@ export const apiClient = {
     request<LlmProvider[]>("/admin/v1/llm/providers", {}, token),
   createLlmProvider: (
     token: string,
-    payload: { name: string; route_prefix?: string; base_url: string; api_key: string },
+    payload: { name: string; supplier_name?: string; route_prefix?: string; base_url: string; api_key: string },
   ) => request<LlmProvider>("/admin/v1/llm/providers", {
     method: "POST",
     body: JSON.stringify(payload),
@@ -311,7 +313,7 @@ export const apiClient = {
   updateLlmProvider: (
     token: string,
     providerId: string,
-    payload: { name?: string; route_prefix?: string; base_url?: string; api_key?: string; status?: "active" | "disabled"; priority?: number },
+    payload: { name?: string; supplier_name?: string; route_prefix?: string; base_url?: string; api_key?: string; status?: "active" | "disabled"; priority?: number },
   ) => request<LlmProvider>(`/admin/v1/llm/providers/${providerId}`, {
     method: "PATCH",
     body: JSON.stringify(payload),

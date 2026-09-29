@@ -2,7 +2,7 @@
 
 import ipaddress
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from urllib.parse import urlsplit
 from uuid import UUID
@@ -30,15 +30,17 @@ class LlmConfigurationValidationError(RuntimeError):
 
 @dataclass(frozen=True, slots=True)
 class LlmProviderInfo:
-    """供应商连接信息；只含 API Key 是否已配置，不含密文或明文。"""
+    """管理员连接详情；api_key 为解密后的密钥，仅供管理员 API 使用。"""
 
     id: UUID
     name: str
+    supplier_name: str
     route_prefix: str | None
     base_url: str
     status: str
     priority: int
     api_key_configured: bool
+    api_key: str | None = field(repr=False)
     created_at: datetime
     updated_at: datetime
     last_tested_at: datetime | None
@@ -71,7 +73,7 @@ class LlmProviderRouteGroup:
 
     prefix: str | None
     connection_count: int
-    provider_names: tuple[str, ...]
+    supplier_names: tuple[str, ...]
 
 
 class LlmConfigurationService:
@@ -86,7 +88,7 @@ class LlmConfigurationService:
         self._cipher = cipher
 
     async def list_providers(self) -> list[LlmProviderInfo]:
-        """按优先级列出供应商连接；绝不返回供应商 API Key。"""
+        """按优先级列出管理员连接详情；密钥只在此管理员用例中解密。"""
         async with self._session_factory() as session:
             providers = await session.scalars(
                 select(LlmProviderConfig).order_by(
@@ -101,12 +103,12 @@ class LlmConfigurationService:
             rows = await session.execute(
                 select(
                     LlmProviderConfig.route_prefix,
-                    LlmProviderConfig.name,
+                    LlmProviderConfig.supplier_name,
                     func.count(LlmProviderConfig.id),
                 )
                 .where(LlmProviderConfig.status == "active")
-                .group_by(LlmProviderConfig.route_prefix, LlmProviderConfig.name)
-                .order_by(LlmProviderConfig.route_prefix, LlmProviderConfig.name)
+                .group_by(LlmProviderConfig.route_prefix, LlmProviderConfig.supplier_name)
+                .order_by(LlmProviderConfig.route_prefix, LlmProviderConfig.supplier_name)
             )
             grouped_rows: dict[str | None, list[tuple[str, int]]] = {}
             for prefix, name, count in rows.all():
@@ -115,43 +117,61 @@ class LlmConfigurationService:
                 LlmProviderRouteGroup(
                     prefix=prefix,
                     connection_count=sum(count for _, count in rows_for_group),
-                    provider_names=tuple(name for name, _ in rows_for_group),
+                    supplier_names=tuple(name for name, _ in rows_for_group),
                 )
                 for prefix, rows_for_group in grouped_rows.items()
             )
 
     async def create_provider(
-        self, name: str, base_url: str, api_key: str, route_prefix: str | None = None
+        self,
+        name: str,
+        base_url: str,
+        api_key: str,
+        route_prefix: str | None = None,
+        supplier_name: str | None = None,
     ) -> LlmProviderInfo:
         """创建供应商连接，并加密保存 API Key。"""
         name = name.strip()
+        supplier_name = (supplier_name or name).strip()
         base_url = self._normalize_base_url(base_url)
         api_key = api_key.strip()
         route_prefix = self._normalize_route_prefix(route_prefix)
-        if not name or len(name) > 100 or not api_key:
-            raise LlmConfigurationValidationError("供应商名称和 API Key 不能为空")
+        if (
+            not name
+            or len(name) > 100
+            or not supplier_name
+            or len(supplier_name) > 100
+            or not api_key
+        ):
+            raise LlmConfigurationValidationError("连接名称、供应商名称和 API Key 不能为空")
         cipher = self._require_cipher()
         provider = LlmProviderConfig(
             name=name,
+            supplier_name=supplier_name,
             route_prefix=route_prefix,
             base_url=base_url,
             encrypted_api_key=cipher.encrypt(api_key),
+            api_fingerprint=cipher.fingerprint(base_url, api_key),
             status="active",
         )
         try:
             async with self._session_factory.begin() as session:
+                await self._ensure_api_unique(session, base_url=base_url, api_key=api_key)
                 session.add(provider)
                 await session.flush()
                 await session.refresh(provider)
                 return self._provider_info(provider)
         except IntegrityError as error:
-            raise LlmConfigurationConflictError("供应商名称已存在") from error
+            raise LlmConfigurationConflictError(
+                "仓库中已存在相同 Base URL 和 API Key 的 API"
+            ) from error
 
     async def update_provider(
         self,
         provider_id: UUID,
         *,
         name: str | None = None,
+        supplier_name: str | None = None,
         base_url: str | None = None,
         api_key: str | None = None,
         status: str | None = None,
@@ -171,12 +191,33 @@ class LlmConfigurationService:
                             "供应商名称长度必须为 1 到 100 个字符"
                         )
                     provider.name = cleaned_name
+                if supplier_name is not None:
+                    cleaned_supplier_name = supplier_name.strip()
+                    if not cleaned_supplier_name or len(cleaned_supplier_name) > 100:
+                        raise LlmConfigurationValidationError(
+                            "供应商名称长度必须为 1 到 100 个字符"
+                        )
+                    provider.supplier_name = cleaned_supplier_name
                 if route_prefix is not None:
                     provider.route_prefix = self._normalize_route_prefix(route_prefix)
                 if base_url is not None:
                     provider.base_url = self._normalize_base_url(base_url)
+                api_key_value = (
+                    api_key.strip()
+                    if api_key is not None and api_key.strip()
+                    else self._require_cipher().decrypt(provider.encrypted_api_key)
+                )
+                await self._ensure_api_unique(
+                    session,
+                    base_url=provider.base_url,
+                    api_key=api_key_value,
+                    exclude_provider_id=provider.id,
+                )
                 if api_key is not None and api_key.strip():
                     provider.encrypted_api_key = self._require_cipher().encrypt(api_key.strip())
+                provider.api_fingerprint = self._require_cipher().fingerprint(
+                    provider.base_url, api_key_value
+                )
                 if status is not None:
                     provider.status = status
                 if priority is not None:
@@ -187,7 +228,9 @@ class LlmConfigurationService:
                 await session.refresh(provider)
                 return self._provider_info(provider)
         except IntegrityError as error:
-            raise LlmConfigurationConflictError("供应商名称已存在") from error
+            raise LlmConfigurationConflictError(
+                "仓库中已存在相同 Base URL 和 API Key 的 API"
+            ) from error
 
     async def delete_provider(self, provider_id: UUID) -> None:
         """删除供应商连接；历史映射数据由外键级联清理。"""
@@ -328,6 +371,33 @@ class LlmConfigurationService:
             )
         return prefix
 
+    async def _ensure_api_unique(
+        self,
+        session: AsyncSession,
+        *,
+        base_url: str,
+        api_key: str,
+        exclude_provider_id: UUID | None = None,
+    ) -> None:
+        """Reject an endpoint and API Key already stored anywhere in the repository.
+
+        Route prefixes and display names do not change the identity of an API.
+        Legacy rows without fingerprints are decrypted and compared. New rows
+        also receive a database uniqueness constraint against concurrent writes.
+        """
+        statement = select(LlmProviderConfig).where(LlmProviderConfig.base_url == base_url)
+        if exclude_provider_id is not None:
+            statement = statement.where(LlmProviderConfig.id != exclude_provider_id)
+        cipher = self._require_cipher()
+        for provider in await session.scalars(statement):
+            if provider.api_fingerprint is not None:
+                if provider.api_fingerprint == cipher.fingerprint(base_url, api_key):
+                    raise LlmConfigurationConflictError(
+                        "仓库中已存在相同 Base URL 和 API Key 的 API"
+                    )
+            elif cipher.decrypt(provider.encrypted_api_key) == api_key:
+                raise LlmConfigurationConflictError("仓库中已存在相同 Base URL 和 API Key 的 API")
+
     def _require_cipher(self) -> ProviderSecretCipher:
         if self._cipher is None:
             raise LlmConfigurationValidationError(
@@ -345,16 +415,21 @@ class LlmConfigurationService:
             api_key=self._require_cipher().decrypt(provider.encrypted_api_key),
         )
 
-    @staticmethod
-    def _provider_info(provider: LlmProviderConfig) -> LlmProviderInfo:
+    def _provider_info(self, provider: LlmProviderConfig) -> LlmProviderInfo:
         return LlmProviderInfo(
             id=provider.id,
             name=provider.name,
+            supplier_name=provider.supplier_name,
             route_prefix=provider.route_prefix,
             base_url=provider.base_url,
             status=provider.status,
             priority=provider.priority,
             api_key_configured=bool(provider.encrypted_api_key),
+            api_key=(
+                self._cipher.decrypt(provider.encrypted_api_key)
+                if self._cipher is not None and provider.encrypted_api_key
+                else None
+            ),
             created_at=provider.created_at,
             updated_at=provider.updated_at,
             last_tested_at=provider.last_tested_at,

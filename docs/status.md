@@ -147,15 +147,20 @@
 - Chat Completions 网关保留并透传标准采样参数、tools、response_format 和未声明扩展字段；供应商兼容响应字段（含工具调用结果）原样保留，公开响应中的 model 仍使用网关模型名。上游以 400/422 拒绝参数时返回清晰的参数错误，不记正文。
 - `stream_options.include_usage` 可用；未实现的 stream option 返回 422，不静默丢弃。当前 `stream: true` 会先等上游完整响应，再由网关编码 SSE，尚未实现上游实时 SSE 的端到端透传。
 - 上游 API Key 以 `LLM_PROVIDER_SECRET_KEY` 加密；第三方 URL 只允许 HTTPS，本机调试允许 loopback HTTP。
-- 已对获准测试库运行 `uv run alembic upgrade head`，当前版本为 `20260929_0014 (head)`；集成测试覆盖同名透传、前缀路由、优先级顺序、密文存储和连通性测试。
-- 管理员前端入口为 `/admin/llm/providers`，支持创建/修改/删除连接、前缀分组、Key 轮换、优先级设置和输入模型名测试连接；密钥不会从服务端读回。
-- 本轮验证：`uv run pytest tests -q`（28 passed，4 skipped；跳过项要求单独配置 `TEST_DATABASE_URL`）、`uv run ruff check app tests`、`uv run mypy app`、`npm run build`、`npm run lint` 均通过。
+- 已对获准测试库运行 `uv run alembic upgrade head`，当前版本为 `20260929_0016 (head)`；集成测试覆盖同名透传、前缀路由、优先级顺序、密文存储和连通性测试。
+- 管理员前端入口为 `/admin/llm/providers`，支持创建/修改/删除连接、前缀分组、Key 轮换、优先级设置和输入模型名测试连接；管理员列表可读回已加密保存的供应商 Key 明文。
+- 供应商名称/连接名拆分后验证：`uv run pytest tests -q`（28 passed，4 skipped；跳过项要求单独配置 `TEST_DATABASE_URL`）；相关 PostgreSQL 集成测试 2 passed；ruff、格式检查、mypy、OpenAPI 契约测试、前端 typecheck/lint/build 均通过。测试库迁移版本为 `20260929_0015 (head)`。
+- 管理员入口命名为“LLM API”；添加表单按一个 API 组填写供应商名称、连接名称、路由前缀和 Base URL，多行文本框每行一个 API Key，逐个保存并反馈结果。数据库允许同一连接名称下多条 API Key 记录；列表提供逐条连通性测试、编辑、停用和删除。新增 `20260929_0016` 移除连接名称唯一约束。
+- 管理员列表将相同供应商名称、连接名称、前缀和 Base URL 的 API Key 收进同一组展示；管理员 API 列表返回服务端解密后的上游 Key，支持明文查看和复制。公开用户目录仍不会返回密钥。
+- 同一 Base URL 和 API Key 代表同一个 API，全仓库不允许重复保存，路由前缀和显示名称不影响去重；批量粘贴在前端去重，后端创建和编辑都会查库校验，数据库用密钥派生的 HMAC 指纹加唯一约束防止并发重复；重复请求返回 HTTP 409。已有旧记录通过后端解密比较参与校验。
+- PostgreSQL 集成验证确认同一组可保存多个 API Key、用户目录只显示一次供应商名称，且每条 API 可独立连通测试；对应集成测试 2 passed。测试库已升级至 `20260929_0016 (head)`。
 - 后端 `uv run pytest tests -q`：23 项通过、4 项因未配置 `TEST_DATABASE_URL` 跳过；ruff、mypy 和 OpenAPI 契约测试通过。
 - 前端 `npm run typecheck`、`npm run lint`、`npm run build`：全部通过。
 - HTTP 集成测试使用真实 PostgreSQL 和模拟上游验证管理员权限、供应商 CRUD、密钥不泄露、最小聊天连通性请求和公开模型列表。真实方舟直连已由用户使用 curl 验证；网关经真实上游的完整调用仍待验证。
 - 普通登录用户可通过 `GET /api/v1/llm/provider-catalog` 查看当前启用的默认池和路由前缀组、管理员配置的供应商显示名称及连接数；“我的服务”页展示这些供应商名称、路由前缀和 `前缀/模型名` 调用格式。目录不泄露 Base URL、优先级或 Key。
 - 针对该目录新增 HTTP 集成测试，验证未登录拒绝、普通用户读取成功、管理员也可读取及返回体不含上游敏感字段；`uv run pytest tests/integration/test_llm_provider_admin_api.py -m integration -q`：1 passed。
 - 更新后验证：`uv run pytest tests -q`：28 passed、4 skipped（缺少 `TEST_DATABASE_URL`）；ruff、格式检查、mypy、OpenAPI 契约测试通过；前端 typecheck、lint、build 通过。
+- 供应商目录采用“供应商名称 + 上游连接名称”两层结构。新增 `20260929_0015` 为现有连接回填供应商名称；现有连接默认以原连接名作为供应商名称，管理员可编辑并将同一家供应商的连接统一名称。用户端对同一路由前缀的供应商名称去重展示。
 
 ### 验证环境说明
 

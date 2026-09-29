@@ -2,6 +2,7 @@
 
 import base64
 import hashlib
+import hmac
 
 from cryptography.fernet import Fernet, InvalidToken
 
@@ -15,6 +16,9 @@ class ProviderSecretCipher:
 
     def __init__(self, secret_key: str) -> None:
         derived = hashlib.sha256(b"llm-provider-secret-v1:" + secret_key.encode()).digest()
+        self._fingerprint_key = hmac.new(
+            derived, b"llm-provider-api-key-fingerprint-v1", hashlib.sha256
+        ).digest()
         self._fernet = Fernet(base64.urlsafe_b64encode(derived))
 
     def encrypt(self, value: str) -> str:
@@ -29,3 +33,8 @@ class ProviderSecretCipher:
             raise ProviderSecretError(
                 "无法解密供应商 API Key，请检查 LLM_PROVIDER_SECRET_KEY"
             ) from error
+
+    def fingerprint(self, base_url: str, api_key: str) -> str:
+        """生成不可逆的 API 身份指纹；相同地址和密钥在所有分组中保持相同。"""
+        value = f"{base_url}\0{api_key}".encode()
+        return hmac.new(self._fingerprint_key, value, hashlib.sha256).hexdigest()

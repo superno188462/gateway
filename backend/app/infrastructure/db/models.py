@@ -274,13 +274,19 @@ class LlmProviderConfig(Base):
     __table_args__ = (
         CheckConstraint("status IN ('active', 'disabled')", name="ck_llm_provider_configs_status"),
         Index("ix_llm_provider_configs_status", "status"),
+        UniqueConstraint(
+            "api_fingerprint",
+            name="uq_llm_provider_configs_api_fingerprint",
+        ),
     )
 
     id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), primary_key=True, default=uuid4)
-    name: Mapped[str] = mapped_column(String(100), unique=True, nullable=False)
+    name: Mapped[str] = mapped_column(String(100), nullable=False)
+    supplier_name: Mapped[str] = mapped_column(String(100), nullable=False)
     route_prefix: Mapped[str | None] = mapped_column(String(64))
     base_url: Mapped[str] = mapped_column(String(500), nullable=False)
     encrypted_api_key: Mapped[str] = mapped_column(Text, nullable=False)
+    api_fingerprint: Mapped[str | None] = mapped_column(String(64))
     status: Mapped[str] = mapped_column(String(20), nullable=False, server_default="active")
     priority: Mapped[int] = mapped_column(Integer, nullable=False, server_default="100")
     last_tested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
