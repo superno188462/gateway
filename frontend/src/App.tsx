@@ -9,6 +9,7 @@ import { ProjectDetailPage } from "./pages/ProjectDetailPage";
 import { ProjectCreatePage } from "./pages/ProjectCreatePage";
 import { ProjectApiKeysPage } from "./pages/ProjectApiKeysPage";
 import { MyServicesPage } from "./pages/MyServicesPage";
+import { LlmProvidersPage } from "./pages/LlmProvidersPage";
 
 const navigation = [
   { label: "运行状态", to: "/" },
@@ -22,7 +23,9 @@ function AppShell() {
   const location = useLocation();
   const pageTitle = location.pathname === "/account/services"
     ? "我的服务"
-    : location.pathname === "/projects/new"
+    : location.pathname === "/admin/llm/providers"
+      ? "LLM 供应商"
+      : location.pathname === "/projects/new"
     ? "创建项目"
     : location.pathname.endsWith("/keys")
       ? "API Key"
@@ -60,6 +63,14 @@ function AppShell() {
               </NavLink>
             ),
           )}
+          {user?.role === "admin" && (
+            <NavLink
+              className={({ isActive }) => `nav-item${isActive ? " nav-item-active" : ""}`}
+              to="/admin/llm/providers"
+            >
+              LLM 供应商
+            </NavLink>
+          )}
         </nav>
         <div className="sidebar-footer">
           <span className="status-dot" aria-hidden="true" />
@@ -86,6 +97,7 @@ function AppShell() {
           <Route element={<ProjectDetailPage />} path="/projects/:projectId" />
           <Route element={<ProjectApiKeysPage />} path="/projects/:projectId/keys" />
           <Route element={<MyServicesPage />} path="/account/services" />
+          <Route element={user?.role === "admin" ? <LlmProvidersPage /> : <Navigate replace to="/" />} path="/admin/llm/providers" />
           <Route element={<Navigate replace to="/" />} path="*" />
         </Routes>
       </main>

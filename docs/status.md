@@ -10,15 +10,15 @@
 | A1 | 统一登录、角色、JWT | 四种启动分支和登录流程 | 已完成 |
 | A2 | 项目管理 | CRUD、项目成员权限、标签检索和分页 | 功能已完成；隔离 PostgreSQL 集成验收待执行 |
 | A3 | API Key | owner/editor 可查看明文、加密存储、撤销 | 已完成 |
-| A4 | LLM Mock 网关 | 用户级额度、项目分配、Key 调用、月度用量和无正文请求记录 | 前后端已完成 |
+| A4 | LLM 网关与 OpenAI 兼容上游 | 用户级额度、项目分配、项目 Key 调用、模型映射与上游连接池 | 功能已完成；真实供应商经网关端到端验证待执行 |
 | A5 | 日志与用量 | 筛选、分页、汇总一致 | 未开始 |
 | A6 | 模板与记忆 | 固定目录、文件 CRUD、并发冲突 | 未开始 |
 | A7 | 公网部署 | TLS、限流、备份、回滚和安全验收 | 未开始 |
 
 ## 当前阶段
 
-- 当前：A4 LLM Mock 网关、用户级额度和前端个人服务/项目分配页面已完成；下一步进入 A5。
-- 本轮不包含：真实 LLM Provider、ASR/TTS/Embedding/RAG/记忆/画像、A5 日志页面和公网部署。
+- 当前：A4 LLM 网关、管理员供应商配置页面、OpenAI 兼容上游连接池和用户级额度均已实现。
+- 本轮不包含：ASR/TTS/Embedding/RAG/记忆/画像、A5 日志页面和公网部署。
 - 运行约定：后端 `uv run python main.py`；前端在 F0 后使用 `npm run dev`；运行时数据库使用服务器 PostgreSQL。Docker 仅用于后续服务器部署。
 - DI 约定：`AppContainer` 注册配置、数据库引擎和基础设施服务单例；路由通过 FastAPI `Depends` 获取，不自行创建服务。
 
@@ -138,6 +138,18 @@
 - 前端 `/account/services` 展示个人月上限、项目分配总额、可分配额度和跨项目月用量；项目详情为 owner 提供服务申请、额度调整和本项目使用量。
 - 管理员可在“我的服务”页按精确用户名或 UUID 查找用户、查看额度汇总并修改 LLM 月额度；允许额度低于项目分配总和或设为 0，用户侧会显示超配/暂停提醒。查找与目标用户额度查询接口仅管理员可访问。
 - `npm run typecheck`、`npm run lint`、`npm run build`：全部通过。
+
+## A4 LLM 网关与 OpenAI 兼容供应商连接池
+
+- 新增迁移 `20260928_0011_llm_provider_configs` 与 `20260929_0012_llm_provider_pools`：供应商连接保存名称、Base URL、密文 API Key 和最近连通性测试状态；模型映射允许同一公开模型名关联多个上游连接。
+- 管理员 API 支持连接和模型映射的增删改、启用/停用；连通性测试使用该连接已启用的上游模型发送最小 `/chat/completions` 请求，不要求供应商实现 `/models`；API 只返回 Key 是否已配置和测试摘要。
+- LLM 网关按公开模型名轮询连接池；连接异常、限流和上游服务错误时切换其他连接，最多尝试 3 个。单一连接仍然可用，内置 `mock-chat` 行为不变。
+- 上游 API Key 以 `LLM_PROVIDER_SECRET_KEY` 加密；第三方 URL 只允许 HTTPS，本机调试允许 loopback HTTP。
+- 已对获准测试库运行 `uv run alembic upgrade head`，当前版本 `20260929_0012 (head)`；集成测试覆盖多连接同模型、密文存储、模型池解析和连通性测试。
+- 管理员前端入口为 `/admin/llm/providers`，支持创建/修改/删除连接、Key 轮换、连通性测试、模型映射维护和连接池概览；密钥不会从服务端读回。
+- 后端 `uv run pytest tests -q`：23 项通过、4 项因未配置 `TEST_DATABASE_URL` 跳过；ruff、mypy 和 OpenAPI 契约测试通过。
+- 前端 `npm run typecheck`、`npm run lint`、`npm run build`：全部通过。
+- HTTP 集成测试使用真实 PostgreSQL 和模拟上游验证管理员权限、供应商 CRUD、密钥不泄露、最小聊天连通性请求和公开模型列表。真实方舟直连已由用户使用 curl 验证；网关经真实上游的完整调用仍待验证。
 
 ### 验证环境说明
 

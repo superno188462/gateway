@@ -68,11 +68,30 @@ B0 不创建业务实体。数据库只产生 Alembic 自己的 `alembic_version
 
 数据库实现是 Adapter；单元测试使用 Fake Probe，集成测试使用真实 PostgreSQL。
 
-## A4 LLM Mock 垂直切片
+## A4 服务模块结构
 
-- `app/domain/llm.py` 定义 `LlmProvider` Port 和与厂商无关的消息/结果类型；`infrastructure/mock_llm.py` 实现确定性 Mock，未来真实 Provider 只替换 DI 装配。
-- `application/llm_services.py` 管理项目服务目录、owner 申请与额度升级；`application/llm_gateway.py` 校验服务开通、预留月额度、调用 Provider、结算用量和记录请求。
-- `api/llm_services.py` 提供服务目录、项目订阅/用量、申请和升级 API；`api/llm_gateway.py` 提供面向 Agent 的 OpenAI 风格聊天 API。
+每种具体能力在 `app/services/` 下保持同级，拥有自己的接口、应用用例、HTTP 路由和 Provider 适配器。跨服务的服务目录、项目申请、额度和用量管理位于 `app/service_management/`；目录项契约位于 `app/domain/service_catalog.py`。组合根通过 `AppContainer` 将各服务目录项注册给通用服务管理，并注册服务模块的网关实现。
+
+```text
+app/
+├── services/
+│   ├── llm/                 # LLM API、网关用例、领域契约、Provider
+│   │   └── providers/mock.py
+│   ├── asr/                 # 后续新增，与 llm 平级
+│   ├── tts/                 # 后续新增，与 llm 平级
+│   └── embedding/            # 后续新增，与 llm 平级
+├── service_management/       # 跨服务目录、申请、额度与用量管理
+├── domain/service_catalog.py # 服务模块与通用管理共享的目录契约
+└── container.py              # 服务目录与实现的组合根 / DI 注册
+```
+
+- `services/llm/domain.py` 定义 `LlmProvider` Port 和厂商无关的消息/结果类型；`services/llm/providers/` 实现具体 Provider，当前只有确定性 Mock。
+- 管理员可通过 `services/llm/configuration.py` 的 API 配置多个 OpenAI 兼容上游连接，并将网关公开模型代码映射到上游模型名；同一公开模型可绑定多个连接组成池。供应商密钥以 `LLM_PROVIDER_SECRET_KEY` 派生的 Fernet 密钥加密后写入数据库，API 只返回 `api_key_configured`。
+- `services/llm/providers/openai_compatible.py` 按公开模型代码轮询启用连接，并在网络错误、限流或上游服务错误时尝试其他连接，每次最多尝试 3 个；第三方 URL 必须为 HTTPS，本机 HTTP 仅供开发调试。
+- 管理员可以请求兼容的 `/models` 测试上游连通性，数据库仅保存测试时间、成功状态及安全摘要，不保存供应商原始响应。
+- `services/llm/application.py` 校验服务开通、预留月额度、调用 Provider、结算用量和记录请求；`services/llm/api.py` 提供 OpenAI 风格聊天 API。
+- `service_management/application.py` 通过容器注入的服务目录管理项目申请、额度和用量；`service_management/api.py` 暴露现有服务目录、订阅、申请和额度 API。
+- 现有 HTTP 路径和服务目录行为保持兼容。添加新服务时，在 `services/<name>/` 实现模块，并在组合根注册对应目录项；服务管理代码不依赖某个具体 Provider。
 - 调用方使用 `Authorization: Bearer <项目 API Key>`。API Key 服务解析项目 ID，客户端不传项目 ID；认证后的项目必须已有对应服务订阅。
 - `service_usage_buckets` 按项目、服务和 UTC 月初聚合 token；通过数据库行锁序列化同项目同服务的额度预留，避免并发请求同时突破月度上限。
 - `gateway_requests` 保存请求追踪和 token 元数据，不关联外键以便项目/Key 后续删除时保留运营日志；不含 prompt、messages、completion 或 response 正文。

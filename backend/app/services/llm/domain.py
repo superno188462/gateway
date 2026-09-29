@@ -25,6 +25,10 @@ class ProviderCompletion:
 class LlmProvider(Protocol):
     """可替换的聊天模型 Provider 端口。"""
 
+    async def supports(self, model: str) -> bool:
+        """判断公开模型代码是否已配置且可调用。"""
+        ...
+
     async def complete(
         self, model: str, messages: list[ChatMessage], max_tokens: int
     ) -> ProviderCompletion:

@@ -2,11 +2,15 @@
 
 import re
 
-from app.domain.llm import ChatMessage, ProviderCompletion
+from app.services.llm.domain import ChatMessage, ProviderCompletion
 
 
 class MockLlmProvider:
     """不访问第三方模型，以稳定规则返回结果并估算 token。"""
+
+    async def supports(self, model: str) -> bool:
+        """仅支持内置的 mock-chat 标识。"""
+        return model == "mock-chat"
 
     async def complete(
         self, model: str, messages: list[ChatMessage], max_tokens: int

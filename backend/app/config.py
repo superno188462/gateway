@@ -35,6 +35,11 @@ class Settings(BaseSettings):
         min_length=32,
         description="用于 API Key 摘要和密文加解密的主密钥；未配置时禁用 Key 功能。",
     )
+    llm_provider_secret_key: SecretStr | None = Field(
+        default=None,
+        min_length=32,
+        description="供应商 API Key 的服务端加密主密钥；未配置时禁用供应商配置管理。",
+    )
     default_llm_monthly_token_limit: int = Field(
         default=100_000,
         ge=0,

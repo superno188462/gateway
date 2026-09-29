@@ -1,4 +1,4 @@
-"""LLM Mock 网关用例：授权、额度预留、完成调用和无正文用量记录。"""
+"""LLM 网关用例：授权、额度预留、Provider 调用、结算和无正文用量记录。"""
 
 import time
 from dataclasses import dataclass
@@ -10,7 +10,6 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.application.api_keys import VerifiedApiKey
-from app.domain.llm import ChatMessage, LlmProvider, ProviderCompletion
 from app.infrastructure.db.models import (
     GatewayRequest,
     Project,
@@ -19,7 +18,8 @@ from app.infrastructure.db.models import (
     User,
     UserServiceQuota,
 )
-from app.infrastructure.mock_llm import estimate_tokens
+from app.services.llm.domain import ChatMessage, LlmProvider, ProviderCompletion
+from app.services.llm.providers.mock import estimate_tokens
 
 
 class GatewayRequestError(RuntimeError):
@@ -44,10 +44,9 @@ class GatewayCompletion:
 
 
 class LlmGatewayService:
-    """将已验证项目 Key 的请求路由到 Mock Provider 并实施月额度。"""
+    """将已验证项目 Key 的请求路由到 Provider 并实施月额度。"""
 
     service_code = "mock-llm-v1"
-    allowed_model = "mock-chat"
 
     def __init__(
         self,
@@ -67,7 +66,7 @@ class LlmGatewayService:
         """预留最大用量后调用 Provider，成功记实际用量，失败释放预留。"""
         request_id = f"req_{uuid4().hex}"
         started = time.perf_counter()
-        if model != self.allowed_model:
+        if not await self._provider.supports(model):
             await self._write_request(
                 request_id,
                 api_key,
@@ -91,7 +90,7 @@ class LlmGatewayService:
                 api_key, request_id, model, period_start, reservation, self._latency(started)
             )
             raise GatewayRequestError(
-                "provider_error", "Mock 模型服务暂时不可用", 502, request_id
+                "provider_error", "LLM 上游服务暂时不可用", 502, request_id
             ) from error
         await self._settle_and_log(
             api_key,

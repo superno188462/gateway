@@ -8,13 +8,15 @@ from fastapi import FastAPI
 from app.api.api_keys import router as api_keys_router
 from app.api.auth import router as auth_router
 from app.api.health import router as health_router
-from app.api.llm_gateway import router as llm_gateway_router
-from app.api.llm_services import account_router as account_services_router
-from app.api.llm_services import router as llm_services_router
 from app.api.projects import router as projects_router
 from app.config import Settings
 from app.container import AppContainer
 from app.domain.health import ReadinessProbe
+from app.service_management.api import account_router as account_services_router
+from app.service_management.api import router as llm_services_router
+from app.services.llm.admin_api import public_router as llm_models_router
+from app.services.llm.admin_api import router as llm_provider_admin_router
+from app.services.llm.api import router as llm_gateway_router
 
 
 def create_app(
@@ -34,7 +36,7 @@ def create_app(
     app = FastAPI(
         title="Agent Gateway API",
         version="0.1.0",
-        description="Agent 网关中台后端。A1 提供管理员认证和健康检查。",
+        description="Agent 网关中台后端，提供账户、项目、服务管理和模型网关接口。",
         lifespan=lifespan,
     )
     app.state.container = container
@@ -45,4 +47,6 @@ def create_app(
     app.include_router(llm_services_router)
     app.include_router(account_services_router)
     app.include_router(llm_gateway_router)
+    app.include_router(llm_models_router)
+    app.include_router(llm_provider_admin_router)
     return app

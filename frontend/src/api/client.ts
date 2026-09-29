@@ -95,6 +95,32 @@ export type UserServiceQuota = {
 
 export type CreatedApiKey = ApiKey & { secret: string };
 
+/** 管理员维护的 OpenAI 兼容上游及其网关模型映射。 */
+export type LlmProviderModel = {
+  id: string;
+  model_code: string;
+  upstream_model: string;
+  status: "active" | "disabled";
+};
+
+export type LlmProvider = {
+  id: string;
+  name: string;
+  base_url: string;
+  status: "active" | "disabled";
+  api_key_configured: boolean;
+  last_tested_at: string | null;
+  last_test_success: boolean | null;
+  last_test_message: string | null;
+  models: LlmProviderModel[];
+};
+
+export type LlmProviderTestResult = {
+  success: boolean;
+  message: string;
+  tested_at: string;
+};
+
 export type ApiError = {
   code?: string;
   message?: string;
@@ -272,4 +298,45 @@ export const apiClient = {
       method: "PATCH",
       body: JSON.stringify({ monthly_token_limit: monthlyTokenLimit }),
     }, token),
+  getLlmProviders: (token: string) =>
+    request<LlmProvider[]>("/admin/v1/llm/providers", {}, token),
+  createLlmProvider: (
+    token: string,
+    payload: { name: string; base_url: string; api_key: string },
+  ) => request<LlmProvider>("/admin/v1/llm/providers", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  }, token),
+  updateLlmProvider: (
+    token: string,
+    providerId: string,
+    payload: { name?: string; base_url?: string; api_key?: string; status?: "active" | "disabled" },
+  ) => request<LlmProvider>(`/admin/v1/llm/providers/${providerId}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  }, token),
+  deleteLlmProvider: (token: string, providerId: string) =>
+    request<void>(`/admin/v1/llm/providers/${providerId}`, { method: "DELETE" }, token),
+  testLlmProvider: (token: string, providerId: string) =>
+    request<LlmProviderTestResult>(`/admin/v1/llm/providers/${providerId}/test`, {
+      method: "POST",
+    }, token),
+  createLlmProviderModel: (
+    token: string,
+    providerId: string,
+    payload: { model_code: string; upstream_model: string },
+  ) => request<LlmProviderModel>(`/admin/v1/llm/providers/${providerId}/models`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  }, token),
+  updateLlmProviderModel: (
+    token: string,
+    modelId: string,
+    payload: { model_code?: string; upstream_model?: string; status?: "active" | "disabled" },
+  ) => request<LlmProviderModel>(`/admin/v1/llm/models/${modelId}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  }, token),
+  deleteLlmProviderModel: (token: string, modelId: string) =>
+    request<void>(`/admin/v1/llm/models/${modelId}`, { method: "DELETE" }, token),
 };

@@ -11,9 +11,9 @@ from fastapi.security import HTTPAuthorizationCredentials
 from pydantic import BaseModel, Field, model_validator
 
 from app.application.api_keys import ApiKeyInvalidError, ApiKeyService, VerifiedApiKey
-from app.application.llm_gateway import GatewayCompletion, GatewayRequestError, LlmGatewayService
 from app.container import bearer_scheme, get_api_key_service, get_llm_gateway_service
-from app.domain.llm import ChatMessage
+from app.services.llm.application import GatewayCompletion, GatewayRequestError, LlmGatewayService
+from app.services.llm.domain import ChatMessage
 
 router = APIRouter(tags=["LLM Gateway"])
 

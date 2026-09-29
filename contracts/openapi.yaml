@@ -1,919 +1,2104 @@
 openapi: 3.1.0
 info:
   title: Agent Gateway API
+  description: Agent 网关中台后端，提供账户、项目、服务管理和模型网关接口。
   version: 0.1.0
-  description: 统一认证、项目管理、成员授权和健康检查接口契约。
 paths:
   /health/live:
     get:
-      operationId: getLiveness
+      tags:
+      - Health
       summary: 检查应用进程是否可响应
-      tags: [Health]
+      description: 返回进程存活状态，不访问外部依赖。
+      operationId: liveness_health_live_get
       responses:
-        "200":
-          description: 应用进程可响应
+        '200':
+          description: Successful Response
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/HealthResponse"
+                $ref: '#/components/schemas/HealthResponse'
   /health/ready:
     get:
-      operationId: getReadiness
+      tags:
+      - Health
       summary: 检查应用是否可接收依赖数据库的请求
-      description: 执行最小数据库查询；失败响应不包含连接串或底层异常文本。
-      tags: [Health]
+      description: 验证数据库可用性，并将底层异常转换为安全的稳定错误。
+      operationId: readiness_health_ready_get
       responses:
-        "200":
-          description: 数据库连接正常
+        '200':
+          description: Successful Response
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/HealthResponse"
-        "503":
-          description: 数据库当前不可用
+                $ref: '#/components/schemas/HealthResponse'
+        '503':
+          description: Service Unavailable
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ErrorResponse"
-  /api/v1/auth/login:
-    post:
-      operationId: login
-      summary: 用户登录
-      tags: [Auth]
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/LoginRequest"
-      responses:
-        "200":
-          description: 登录成功
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/TokenResponse"
-        "401":
-          description: 用户名或密码错误
+                $ref: '#/components/schemas/ErrorResponse'
   /api/v1/auth/register:
     post:
-      operationId: register
+      tags:
+      - Auth
       summary: 注册普通用户
-      tags: [Auth]
+      description: 创建普通用户，注册接口不会创建管理员。
+      operationId: register_api_v1_auth_register_post
       requestBody:
-        required: true
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/RegisterRequest"
+              $ref: '#/components/schemas/RegisterRequest'
+        required: true
       responses:
-        "201":
-          description: 注册成功
+        '201':
+          description: Successful Response
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/UserResponse"
-        "409":
+                $ref: '#/components/schemas/UserResponse'
+        '409':
           description: 用户名已存在
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v1/auth/login:
+    post:
+      tags:
+      - Auth
+      summary: 用户登录
+      description: 验证用户凭据并签发包含角色的短期 Bearer 令牌。
+      operationId: login_api_v1_auth_login_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
   /api/v1/auth/logout:
     post:
-      operationId: logout
+      tags:
+      - Auth
       summary: 用户退出
-      tags: [Auth]
-      security:
-        - bearerAuth: []
+      description: 撤销当前令牌；客户端也应清理本地令牌。
+      operationId: logout_api_v1_auth_logout_post
       responses:
-        "204":
-          description: 当前令牌已撤销
-        "401":
+        '204':
+          description: Successful Response
+        '401':
           description: 令牌无效或缺失
+      security:
+      - HTTPBearer: []
   /api/v1/auth/me:
     get:
-      operationId: getCurrentUser
+      tags:
+      - Auth
       summary: 获取当前用户
-      tags: [Auth]
-      security:
-        - bearerAuth: []
+      description: 返回当前登录用户的非敏感信息。
+      operationId: me_api_v1_auth_me_get
       responses:
-        "200":
-          description: 当前管理员公开信息
+        '200':
+          description: Successful Response
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/UserResponse"
-        "401":
+                $ref: '#/components/schemas/UserResponse'
+        '401':
           description: 令牌无效或缺失
+      security:
+      - HTTPBearer: []
   /api/admin/v1/projects:
     post:
-      operationId: create_project
+      tags:
+      - Projects
       summary: 创建项目
-      description: 任何已认证用户均可创建；创建者成为 owner，默认项目为私有。
-      tags: [Projects]
+      description: 任何已登录用户都可以创建项目，创建者自动成为 owner。
+      operationId: create_project_api_admin_v1_projects_post
       security:
-        - bearerAuth: []
+      - HTTPBearer: []
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/ProjectCreateRequest"
+              $ref: '#/components/schemas/ProjectCreateRequest'
       responses:
-        "201":
-          description: 创建成功
+        '201':
+          description: Successful Response
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ProjectResponse"
+                $ref: '#/components/schemas/ProjectResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
     get:
-      operationId: list_projects
-      summary: 查询可访问项目
-      description: 管理员可 review 所有项目；普通用户可查看公开项目及私有成员项目。
-      tags: [Projects]
+      tags:
+      - Projects
+      summary: 筛选和分页查询可访问项目
+      description: 管理员查询全部项目；普通用户查询可见项目，并支持关键词、标签、状态和分页。
+      operationId: list_projects_api_admin_v1_projects_get
       security:
-        - bearerAuth: []
+      - HTTPBearer: []
       parameters:
-        - in: query
-          name: query
-          schema: { type: string, maxLength: 100 }
-          description: 按项目名称或描述模糊搜索。
-        - in: query
-          name: tag
-          schema: { type: string, minLength: 1, maxLength: 20 }
-          description: 精确匹配一个标签。
-        - in: query
-          name: status
-          schema: { type: string, enum: [active, inactive] }
-        - in: query
-          name: offset
-          schema: { type: integer, minimum: 0, default: 0 }
-        - in: query
-          name: limit
-          schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+      - name: query
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            maxLength: 100
+          - type: 'null'
+          title: Query
+      - name: tag
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            minLength: 1
+            maxLength: 20
+          - type: 'null'
+          title: Tag
+      - name: status
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - enum:
+            - active
+            - inactive
+            type: string
+          - type: 'null'
+          title: Status
+      - name: offset
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 0
+          default: 0
+          title: Offset
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 100
+          minimum: 1
+          default: 20
+          title: Limit
       responses:
-        "200":
-          description: 项目列表
+        '200':
+          description: Successful Response
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ProjectListResponse"
+                $ref: '#/components/schemas/ProjectListResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
   /api/admin/v1/projects/tags:
     get:
-      operationId: list_project_tags
+      tags:
+      - Projects
       summary: 查询可见项目的标签建议
-      tags: [Projects]
-      security:
-        - bearerAuth: []
+      description: 返回当前用户可查看项目中的标签，供项目列表筛选。
+      operationId: list_project_tags_api_admin_v1_projects_tags_get
       responses:
-        "200":
-          description: 标签列表
+        '200':
+          description: Successful Response
           content:
             application/json:
               schema:
+                items:
+                  type: string
                 type: array
-                items: { type: string }
-  /api/admin/v1/projects/{project_id}:
-    parameters:
-      - $ref: "#/components/parameters/ProjectId"
-    get:
-      operationId: get_project
-      summary: 查看项目
-      description: 管理员可 review 所有项目；公开项目对所有已认证用户可读，私有项目仅对成员可读。
-      tags: [Projects]
+                title: Response List Project Tags Api Admin V1 Projects Tags Get
       security:
-        - bearerAuth: []
+      - HTTPBearer: []
+  /api/admin/v1/projects/{project_id}:
+    get:
+      tags:
+      - Projects
+      summary: 查看项目
+      operationId: get_project_api_admin_v1_projects__project_id__get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: project_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Project Id
       responses:
-        "200":
-          description: 项目详情
+        '200':
+          description: Successful Response
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ProjectResponse"
+                $ref: '#/components/schemas/ProjectResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
     patch:
-      operationId: update_project
+      tags:
+      - Projects
       summary: 更新项目
-      description: 仅项目 owner 可以更新；管理员的跨项目权限为只读 review。
-      tags: [Projects]
+      operationId: update_project_api_admin_v1_projects__project_id__patch
       security:
-        - bearerAuth: []
+      - HTTPBearer: []
+      parameters:
+      - name: project_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Project Id
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/ProjectUpdateRequest"
+              $ref: '#/components/schemas/ProjectUpdateRequest'
       responses:
-        "200":
-          description: 更新成功
+        '200':
+          description: Successful Response
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ProjectResponse"
+                $ref: '#/components/schemas/ProjectResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
     delete:
-      operationId: delete_project
+      tags:
+      - Projects
       summary: 删除项目
-      description: 仅项目 owner 可以永久删除；标签和成员关系会随项目一并删除。
-      tags: [Projects]
+      description: 永久删除项目及其标签、成员关系；仅项目 owner 可以删除。
+      operationId: delete_project_api_admin_v1_projects__project_id__delete
       security:
-        - bearerAuth: []
+      - HTTPBearer: []
+      parameters:
+      - name: project_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Project Id
       responses:
-        "204":
-          description: 删除成功
-        "403":
-          description: 当前用户不是项目 owner
-        "404":
-          description: 项目不存在
+        '204':
+          description: Successful Response
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
   /api/admin/v1/projects/{project_id}/members:
-    parameters:
-      - $ref: "#/components/parameters/ProjectId"
     get:
-      operationId: list_members
+      tags:
+      - Projects
       summary: 查询项目成员
-      tags: [Projects]
+      operationId: list_members_api_admin_v1_projects__project_id__members_get
       security:
-        - bearerAuth: []
+      - HTTPBearer: []
+      parameters:
+      - name: project_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Project Id
       responses:
-        "200":
-          description: 项目成员列表
+        '200':
+          description: Successful Response
           content:
             application/json:
               schema:
                 type: array
                 items:
-                  $ref: "#/components/schemas/ProjectMemberResponse"
+                  $ref: '#/components/schemas/ProjectMemberResponse'
+                title: Response List Members Api Admin V1 Projects  Project Id  Members
+                  Get
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
     post:
-      operationId: add_member
+      tags:
+      - Projects
       summary: 添加项目成员
-      tags: [Projects]
+      operationId: add_member_api_admin_v1_projects__project_id__members_post
       security:
-        - bearerAuth: []
+      - HTTPBearer: []
+      parameters:
+      - name: project_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Project Id
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/ProjectMemberRequest"
+              $ref: '#/components/schemas/ProjectMemberRequest'
       responses:
-        "201":
-          description: 添加成功
+        '201':
+          description: Successful Response
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ProjectMemberResponse"
+                $ref: '#/components/schemas/ProjectMemberResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
   /api/admin/v1/projects/{project_id}/members/{member_user_id}:
-    parameters:
-      - $ref: "#/components/parameters/ProjectId"
+    delete:
+      tags:
+      - Projects
+      summary: 移除项目成员
+      operationId: remove_member_api_admin_v1_projects__project_id__members__member_user_id__delete
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: project_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Project Id
       - name: member_user_id
         in: path
         required: true
         schema:
           type: string
           format: uuid
-    delete:
-      operationId: remove_member
-      summary: 移除项目成员
-      tags: [Projects]
-      security:
-        - bearerAuth: []
+          title: Member User Id
       responses:
-        "204":
-          description: 移除成功
+        '204':
+          description: Successful Response
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
     patch:
-      operationId: update_project_member_role
+      tags:
+      - Projects
       summary: 修改项目成员角色
-      tags: [Projects]
+      operationId: update_member_role_api_admin_v1_projects__project_id__members__member_user_id__patch
       security:
-        - bearerAuth: []
+      - HTTPBearer: []
+      parameters:
+      - name: project_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Project Id
+      - name: member_user_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Member User Id
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/ProjectMemberRoleUpdateRequest"
+              $ref: '#/components/schemas/ProjectMemberRoleUpdateRequest'
       responses:
-        "200":
-          description: 角色修改成功
+        '200':
+          description: Successful Response
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ProjectMemberResponse"
+                $ref: '#/components/schemas/ProjectMemberResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
   /api/admin/v1/projects/{project_id}/keys:
-    parameters:
-      - $ref: "#/components/parameters/ProjectId"
     get:
-      operationId: list_api_keys
+      tags:
+      - API Keys
       summary: 查询项目 API Key
-      description: owner 和 editor 可查询完整 Key；数据库保存加密密文，响应不返回摘要。
-      tags: [API Keys]
+      operationId: list_api_keys_api_admin_v1_projects__project_id__keys_get
       security:
-        - bearerAuth: []
+      - HTTPBearer: []
+      parameters:
+      - name: project_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Project Id
       responses:
-        "200":
-          description: Key 元数据列表
+        '200':
+          description: Successful Response
           content:
             application/json:
               schema:
                 type: array
-                items: { $ref: "#/components/schemas/ApiKeyResponse" }
-        "403": { description: 当前用户不是项目 owner }
-        "404": { description: 项目不存在 }
-        "503": { description: 未配置 API_KEY_SECRET_KEY }
+                items:
+                  $ref: '#/components/schemas/ApiKeyResponse'
+                title: Response List Api Keys Api Admin V1 Projects  Project Id  Keys
+                  Get
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
     post:
-      operationId: create_api_key
+      tags:
+      - API Keys
       summary: 创建项目 API Key
-      description: 仅项目 owner 可创建；每个 Key 默认具有整个项目的调用权限。
-      tags: [API Keys]
+      operationId: create_api_key_api_admin_v1_projects__project_id__keys_post
       security:
-        - bearerAuth: []
+      - HTTPBearer: []
+      parameters:
+      - name: project_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Project Id
       requestBody:
         required: true
         content:
           application/json:
-            schema: { $ref: "#/components/schemas/ApiKeyCreateRequest" }
+            schema:
+              $ref: '#/components/schemas/ApiKeyCreateRequest'
       responses:
-        "201":
-          description: 已创建；请立即安全保存 secret。
+        '201':
+          description: Successful Response
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/ApiKeyCreatedResponse" }
-        "403": { description: 当前用户不是项目 owner }
-        "404": { description: 项目不存在 }
-        "422": { description: Key 名称或有效期无效 }
-        "503": { description: 未配置 API_KEY_SECRET_KEY }
+              schema:
+                $ref: '#/components/schemas/ApiKeyCreatedResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
   /api/admin/v1/projects/{project_id}/keys/{key_id}:
-    parameters:
-      - $ref: "#/components/parameters/ProjectId"
+    delete:
+      tags:
+      - API Keys
+      summary: 撤销项目 API Key
+      operationId: revoke_api_key_api_admin_v1_projects__project_id__keys__key_id__delete
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: project_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Project Id
       - name: key_id
         in: path
         required: true
-        schema: { type: string, format: uuid }
-    delete:
-      operationId: revoke_api_key
-      summary: 撤销项目 API Key
-      tags: [API Keys]
-      security:
-        - bearerAuth: []
+        schema:
+          type: string
+          format: uuid
+          title: Key Id
       responses:
-        "204": { description: 已撤销 }
-        "403": { description: 当前用户不是项目 owner }
-        "404": { description: 项目或 Key 不存在 }
-        "503": { description: 未配置 API_KEY_SECRET_KEY }
+        '204':
+          description: Successful Response
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
   /api/admin/v1/services:
     get:
-      operationId: list_service_catalog
-      summary: 查询服务目录和模型
-      description: 目前只提供 LLM Mock 服务；每个用户可用的月额度由个人服务接口返回。
-      tags: [Project Services]
-      security:
-        - bearerAuth: []
+      tags:
+      - Project Services
+      summary: 列出服务目录和模型
+      description: 提供当前可申请的服务目录及额度档位。
+      operationId: list_service_catalog_api_admin_v1_services_get
       responses:
-        "200":
-          description: 可申请的服务及其模型列表
+        '200':
+          description: Successful Response
           content:
             application/json:
               schema:
+                items:
+                  $ref: '#/components/schemas/ServiceCatalogResponse'
                 type: array
-                items: { $ref: "#/components/schemas/ServiceCatalogResponse" }
-  /api/admin/v1/projects/{project_id}/services:
-    parameters:
-      - $ref: "#/components/parameters/ProjectId"
+                title: Response List Service Catalog Api Admin V1 Services Get
+      security:
+      - HTTPBearer: []
+  /api/admin/v1/users/lookup:
     get:
-      operationId: list_project_services
-      summary: 查询项目已开通服务和用量
-      description: 项目成员、公开项目 review 用户和管理员可读；用量周期按 UTC 自然月计算。
-      tags: [Project Services]
+      tags:
+      - Project Services
+      summary: 按用户名或用户 ID 查找额度目标
+      description: 管理员按唯一用户名或 UUID 精确查找用户。
+      operationId: lookup_quota_target_api_admin_v1_users_lookup_get
       security:
-        - bearerAuth: []
+      - HTTPBearer: []
+      parameters:
+      - name: user_id
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            format: uuid
+          - type: 'null'
+          description: 目标用户 UUID；与 username 二选一。
+          title: User Id
+        description: 目标用户 UUID；与 username 二选一。
+      - name: username
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            minLength: 1
+            maxLength: 100
+          - type: 'null'
+          description: 目标用户的精确用户名。
+          title: Username
+        description: 目标用户的精确用户名。
       responses:
-        "200":
-          description: 项目服务订阅及当前月已用、预留 token
+        '200':
+          description: Successful Response
           content:
             application/json:
               schema:
-                type: array
-                items: { $ref: "#/components/schemas/ProjectServiceResponse" }
-        "403": { description: 无权 review 此项目 }
-        "404": { description: 项目不存在 }
-    post:
-      operationId: apply_project_service
-      summary: 申请项目服务
-      description: 仅项目 owner 可申请；额度从 owner 的用户级上限中分配，自动开通且无支付或人工审批。
-      tags: [Project Services]
-      security:
-        - bearerAuth: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: "#/components/schemas/ServiceApplicationRequest" }
-      responses:
-        "201":
-          description: 已开通服务
+                $ref: '#/components/schemas/QuotaTargetResponse'
+        '403':
+          description: 需要管理员权限
+        '404':
+          description: 用户不存在
+        '422':
+          description: Validation Error
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/ProjectServiceResponse" }
-        "403": { description: 只有项目 owner 可以申请 }
-        "404": { description: 项目或服务不存在 }
-        "409": { description: 重复申请或用户额度不足以容纳该项目分配 }
-  /api/admin/v1/projects/{project_id}/services/{service_code}:
-    parameters:
-      - $ref: "#/components/parameters/ProjectId"
-      - name: service_code
-        in: path
-        required: true
-        schema: { type: string }
-    patch:
-      operationId: upgrade_project_service
-      summary: 调整项目服务额度
-      description: 仅项目 owner 可调整项目额度；所有本人项目分配总和不能超过用户上限，额度不能低于当月项目已用和预留 token。
-      tags: [Project Services]
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/admin/v1/users/{user_id}/services:
+    get:
+      tags:
+      - Project Services
+      summary: 查看指定用户服务月额度
+      description: 管理员查看指定用户的额度、项目分配及跨项目当月用量。
+      operationId: get_user_service_quotas_api_admin_v1_users__user_id__services_get
       security:
-        - bearerAuth: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: "#/components/schemas/ProjectServiceAllocationRequest" }
-      responses:
-        "200":
-          description: 已调整项目月度额度
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/ProjectServiceResponse" }
-        "403": { description: 只有项目 owner 可以升级 }
-        "404": { description: 服务订阅不存在 }
-        "409": { description: 用户额度不足或项目额度不能低于当月已用量 }
-  /api/admin/v1/users/{user_id}/services/{service_code}:
-    parameters:
+      - HTTPBearer: []
+      parameters:
       - name: user_id
         in: path
         required: true
-        schema: { type: string, format: uuid }
+        schema:
+          type: string
+          format: uuid
+          title: User Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/UserServiceQuotaResponse'
+                title: Response Get User Service Quotas Api Admin V1 Users  User Id  Services
+                  Get
+        '403':
+          description: 需要管理员权限
+        '404':
+          description: 用户不存在
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/admin/v1/users/{user_id}/services/{service_code}:
+    put:
+      tags:
+      - Project Services
+      summary: 设置用户服务月额度
+      description: 管理员配置指定用户的服务级月额度。
+      operationId: set_user_service_quota_api_admin_v1_users__user_id__services__service_code__put
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: user_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: User Id
       - name: service_code
         in: path
         required: true
-        schema: { type: string }
-    put:
-      operationId: set_user_service_quota
-      summary: 设置用户服务月额度
-      description: 仅管理员可设置；新注册用户使用配置的默认额度。允许上限低于项目分配总额，项目分配记录保留但调用受用户总上限约束；设为 0 会暂停该用户此服务的调用。
-      tags: [Project Services]
-      security:
-        - bearerAuth: []
+        schema:
+          type: string
+          title: Service Code
       requestBody:
         required: true
         content:
           application/json:
-            schema: { $ref: "#/components/schemas/SetUserServiceQuotaRequest" }
+            schema:
+              $ref: '#/components/schemas/SetUserServiceQuotaRequest'
       responses:
-        "200":
-          description: 更新后的用户服务额度
+        '200':
+          description: Successful Response
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/UserServiceQuotaResponse" }
-        "403": { description: 需要管理员权限 }
-        "404": { description: 用户或服务不存在 }
-  /api/admin/v1/users/lookup:
-    get:
-      operationId: lookup_user_for_quota_management
-      summary: 按用户名或用户 ID 查找额度目标
-      description: 仅管理员可用；用户名必须精确匹配。user_id 与 username 必须且只能提供一个。
-      tags: [Project Services]
-      security:
-        - bearerAuth: []
-      parameters:
-        - name: user_id
-          in: query
-          required: false
-          description: 目标用户 UUID，与 username 二选一。
-          schema: { type: string, format: uuid }
-        - name: username
-          in: query
-          required: false
-          description: 目标用户唯一用户名，精确匹配。
-          schema: { type: string, minLength: 1, maxLength: 100 }
-      responses:
-        "200":
-          description: 已找到目标用户的非敏感标识
+              schema:
+                $ref: '#/components/schemas/UserServiceQuotaResponse'
+        '422':
+          description: Validation Error
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/QuotaTargetResponse" }
-        "403": { description: 需要管理员权限 }
-        "404": { description: 用户不存在 }
-        "422": { description: 必须且只能提供一个查询条件 }
-  /api/admin/v1/users/{user_id}/services:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/admin/v1/projects/{project_id}/services:
     get:
-      operationId: get_user_service_quotas
-      summary: 查看指定用户服务月额度
-      description: 仅管理员可用；返回目标用户的服务总上限、项目分配、可分配余额和当月用量。
-      tags: [Project Services]
+      tags:
+      - Project Services
+      summary: 查询项目已开通服务和用量
+      description: 项目成员、公开项目 review 用户和管理员可以查看；管理员只读。
+      operationId: list_project_services_api_admin_v1_projects__project_id__services_get
       security:
-        - bearerAuth: []
+      - HTTPBearer: []
       parameters:
-        - name: user_id
-          in: path
-          required: true
-          schema: { type: string, format: uuid }
+      - name: project_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Project Id
       responses:
-        "200":
-          description: 目标用户服务额度列表
+        '200':
+          description: Successful Response
           content:
             application/json:
               schema:
                 type: array
-                items: { $ref: "#/components/schemas/UserServiceQuotaResponse" }
-        "403": { description: 需要管理员权限 }
-        "404": { description: 用户不存在 }
+                items:
+                  $ref: '#/components/schemas/ProjectServiceResponse'
+                title: Response List Project Services Api Admin V1 Projects  Project
+                  Id  Services Get
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    post:
+      tags:
+      - Project Services
+      summary: 申请项目服务
+      description: 项目 owner 提交申请后自动开通，无支付流程。
+      operationId: apply_project_service_api_admin_v1_projects__project_id__services_post
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: project_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Project Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ServiceApplicationRequest'
+      responses:
+        '201':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectServiceResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/admin/v1/projects/{project_id}/services/{service_code}:
+    patch:
+      tags:
+      - Project Services
+      summary: 调整项目服务额度
+      description: 项目 owner 可调整项目额度；执行时校验个人可分配余额和当月已用量。
+      operationId: update_project_service_allocation_api_admin_v1_projects__project_id__services__service_code__patch
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: project_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Project Id
+      - name: service_code
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Service Code
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProjectServiceAllocationRequest'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectServiceResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
   /api/v1/me/services:
     get:
-      operationId: list_my_services
-      summary: 查看我的服务能力和额度
-      description: 当前登录用户可查看服务目录中的额度、项目分配合计、可分配额度和跨项目当月用量。
-      tags: [My Services]
-      security:
-        - bearerAuth: []
+      tags:
+      - My Services
+      summary: 查看我的服务和额度
+      description: 返回服务目录中当前用户获授的额度、项目分配和当月用量。
+      operationId: list_my_services_api_v1_me_services_get
       responses:
-        "200":
-          description: 个人服务能力列表；当前仅返回 LLM Mock 服务
+        '200':
+          description: Successful Response
           content:
             application/json:
               schema:
+                items:
+                  $ref: '#/components/schemas/UserServiceQuotaResponse'
                 type: array
-                items: { $ref: "#/components/schemas/UserServiceQuotaResponse" }
-        "401": { description: 访问令牌缺失或无效 }
+                title: Response List My Services Api V1 Me Services Get
+      security:
+      - HTTPBearer: []
   /v1/chat/completions:
     post:
-      operationId: create_chat_completion
-      summary: 调用 LLM Mock 聊天模型
-      description: 使用项目 API Key 作为 Bearer 凭证；项目由 Key 自动解析，无需传 project_id。支持 JSON 与 SSE，按 UTC 自然月扣除项目服务额度。消息和回复正文不会持久化。
-      tags: [LLM Gateway]
+      tags:
+      - LLM Gateway
+      summary: 调用 LLM Mock Chat Completions
+      description: 通过项目 API Key 自动解析项目并执行额度校验；请求正文不被保存。
+      operationId: chat_completions_v1_chat_completions_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChatCompletionRequest'
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
       security:
-        - bearerAuth: []
+      - HTTPBearer: []
+  /api/v1/llm/models:
+    get:
+      tags:
+      - LLM
+      summary: 列出可调用的 LLM 模型
+      description: 返回可传入 Chat Completions 的公开模型名，不含供应商信息。
+      operationId: list_available_models_api_v1_llm_models_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                items:
+                  type: string
+                type: array
+                title: Response List Available Models Api V1 Llm Models Get
+  /api/admin/v1/llm/providers:
+    get:
+      tags:
+      - LLM Provider Management
+      summary: 列出 LLM 供应商配置
+      description: 管理员查看供应商 URL、密钥配置状态和模型映射。
+      operationId: list_providers_api_admin_v1_llm_providers_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/ProviderResponse'
+                type: array
+                title: Response List Providers Api Admin V1 Llm Providers Get
+      security:
+      - HTTPBearer: []
+    post:
+      tags:
+      - LLM Provider Management
+      summary: 创建 LLM 供应商
+      description: 创建 OpenAI 兼容供应商，并在服务端加密保存 API Key。
+      operationId: create_provider_api_admin_v1_llm_providers_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateProviderRequest'
+        required: true
+      responses:
+        '201':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProviderResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+      security:
+      - HTTPBearer: []
+  /api/admin/v1/llm/providers/{provider_id}:
+    patch:
+      tags:
+      - LLM Provider Management
+      summary: 修改 LLM 供应商
+      description: 更新连接参数；提交新 API Key 时轮换，留空保持原密钥。
+      operationId: update_provider_api_admin_v1_llm_providers__provider_id__patch
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: provider_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Provider Id
       requestBody:
         required: true
         content:
           application/json:
-            schema: { $ref: "#/components/schemas/ChatCompletionRequest" }
+            schema:
+              $ref: '#/components/schemas/UpdateProviderRequest'
       responses:
-        "200":
-          description: "模型回复；stream=true 时返回 Server-Sent Events，终止事件为 data: [DONE]"
+        '200':
+          description: Successful Response
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/ChatCompletionResponse" }
-            text/event-stream:
-              schema: { type: string, description: OpenAI-compatible SSE chunks. }
-        "401": { description: API Key 缺失、无效、撤销或过期 }
-        "403": { description: 项目尚未开通 LLM Mock 服务 }
-        "404": { description: 模型不存在 }
-        "429": { description: 项目分配额度或用户跨项目总额度不足 }
-        "502": { description: Provider 调用失败 }
+              schema:
+                $ref: '#/components/schemas/ProviderResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    delete:
+      tags:
+      - LLM Provider Management
+      summary: 删除 LLM 供应商
+      description: 删除供应商及其模型映射。
+      operationId: delete_provider_api_admin_v1_llm_providers__provider_id__delete
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: provider_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Provider Id
+      responses:
+        '204':
+          description: Successful Response
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/admin/v1/llm/providers/{provider_id}/test:
+    post:
+      tags:
+      - LLM Provider Management
+      summary: 测试 LLM 供应商连通性
+      description: 使用该连接的首个已启用模型发送最小 Chat Completions 请求；至少需要一个启用的模型映射。不返回原始响应或密钥。
+      operationId: test_provider_api_admin_v1_llm_providers__provider_id__test_post
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: provider_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Provider Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProviderTestResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/admin/v1/llm/providers/{provider_id}/models:
+    post:
+      tags:
+      - LLM Provider Management
+      summary: 为供应商添加模型
+      description: 添加网关公开名称与供应商上游模型名的映射。
+      operationId: create_model_api_admin_v1_llm_providers__provider_id__models_post
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: provider_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Provider Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateModelRequest'
+      responses:
+        '201':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ModelResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/admin/v1/llm/models/{model_id}:
+    patch:
+      tags:
+      - LLM Provider Management
+      summary: 修改 LLM 模型映射
+      description: 修改对外名称、上游模型名或启用状态。
+      operationId: update_model_api_admin_v1_llm_models__model_id__patch
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: model_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Model Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateModelRequest'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ModelResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    delete:
+      tags:
+      - LLM Provider Management
+      summary: 删除 LLM 模型映射
+      description: 删除模型映射。
+      operationId: delete_model_api_admin_v1_llm_models__model_id__delete
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: model_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Model Id
+      responses:
+        '204':
+          description: Successful Response
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
 components:
-  parameters:
-    ProjectId:
-      name: project_id
-      in: path
-      required: true
-      schema:
-        type: string
-        format: uuid
-  securitySchemes:
-    bearerAuth:
-      type: http
-      scheme: bearer
-      bearerFormat: JWT
   schemas:
-    HealthResponse:
-      type: object
-      required: [status]
+    ApiKeyCreateRequest:
       properties:
-        status:
+        name:
           type: string
-          enum: [ok]
-          description: 当前探针状态。
-    ErrorResponse:
-      type: object
-      required: [code, message, request_id]
-      properties:
-        code:
-          type: string
-          example: database_unavailable
-          description: 供调用方稳定判断的错误码。
-        message:
-          type: string
-          description: 可安全展示且不含底层敏感信息的消息。
-        request_id:
-          type: string
-          description: 用于关联服务端日志的请求标识。
-    LoginRequest:
-      type: object
-      required: [username, password]
-      properties:
-        username:
-          type: string
-          minLength: 1
           maxLength: 100
-        password:
-          type: string
-          format: password
           minLength: 1
-          maxLength: 256
-    RegisterRequest:
+          title: Name
+        expires_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Expires At
+          description: 省略表示永不过期。
       type: object
-      required: [username, password]
-      properties:
-        username:
-          type: string
-          minLength: 3
-          maxLength: 100
-        password:
-          type: string
-          format: password
-          minLength: 8
-          maxLength: 256
-    TokenResponse:
-      type: object
-      required: [access_token, token_type, expires_in]
-      properties:
-        access_token:
-          type: string
-        token_type:
-          type: string
-          enum: [bearer]
-        expires_in:
-          type: integer
-          description: 令牌有效期，单位为秒。
-    UserResponse:
-      type: object
-      required: [id, username, role]
+      required:
+      - name
+      title: ApiKeyCreateRequest
+    ApiKeyCreatedResponse:
       properties:
         id:
           type: string
           format: uuid
-        username:
-          type: string
-        role:
-          type: string
-          enum: [admin, user]
-    ProjectCreateRequest:
-      type: object
-      required: [name]
-      properties:
-        name:
-          type: string
-          minLength: 1
-          maxLength: 100
-        description:
-          type: [string, 'null']
-          maxLength: 2000
-        visibility:
-          type: string
-          enum: [public, private]
-          default: private
-          description: 项目可见范围，默认私有。
-        tags:
-          type: array
-          maxItems: 5
-          uniqueItems: true
-          description: 自定义标签；服务端会去空格、转小写并去重，每项最多 20 个字符。
-          items: { type: string, minLength: 1, maxLength: 20 }
-    ProjectUpdateRequest:
-      type: object
-      properties:
-        name:
-          type: string
-          minLength: 1
-          maxLength: 100
-        description:
-          type: [string, 'null']
-          maxLength: 2000
-        status:
-          anyOf:
-            - type: string
-              enum: [active, inactive]
-            - type: 'null'
-        visibility:
-          anyOf:
-            - type: string
-              enum: [public, private]
-            - type: 'null'
-          description: 项目可见范围；仅 owner 可修改。
-        tags:
-          type: array
-          maxItems: 5
-          uniqueItems: true
-          description: 更新项目标签；传空数组可清空。
-          items: { type: string, minLength: 1, maxLength: 20 }
-    ProjectListResponse:
-      type: object
-      required: [items, total, offset, limit]
-      properties:
-        items:
-          type: array
-          items: { $ref: "#/components/schemas/ProjectResponse" }
-        total: { type: integer }
-        offset: { type: integer }
-        limit: { type: integer }
-    ProjectResponse:
-      type: object
-      required: [id, name, description, status, visibility, tags, owner_id, created_at, updated_at]
-      properties:
-        id:
+          title: Id
+        project_id:
           type: string
           format: uuid
+          title: Project Id
         name:
           type: string
-        description:
-          type: [string, 'null']
+          title: Name
+        key_prefix:
+          type: string
+          title: Key Prefix
+        key_last_four:
+          type: string
+          title: Key Last Four
+        secret:
+          type: string
+          title: Secret
+          description: 完整 Key；项目 owner/editor 之后仍可查看。
         status:
           type: string
-          enum: [active, inactive]
-        visibility:
-          type: string
-          enum: [public, private]
-          description: public 对所有已认证用户只读开放；private 仅对 owner、成员及管理员可查看。
-        tags:
-          type: array
-          items: { type: string }
-        owner_id:
-          type: string
-          format: uuid
+          enum:
+          - active
+          - revoked
+          - expired
+          title: Status
+        expires_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Expires At
+        last_used_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Last Used At
+        revoked_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Revoked At
         created_at:
           type: string
           format: date-time
-        updated_at:
+          title: Created At
+      type: object
+      required:
+      - id
+      - project_id
+      - name
+      - key_prefix
+      - key_last_four
+      - secret
+      - status
+      - expires_at
+      - last_used_at
+      - revoked_at
+      - created_at
+      title: ApiKeyCreatedResponse
+    ApiKeyResponse:
+      properties:
+        id:
+          type: string
+          format: uuid
+          title: Id
+        project_id:
+          type: string
+          format: uuid
+          title: Project Id
+        name:
+          type: string
+          title: Name
+        key_prefix:
+          type: string
+          title: Key Prefix
+        key_last_four:
+          type: string
+          title: Key Last Four
+        secret:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Secret
+          description: 完整 Key；仅 owner/editor 可查看，旧版无法恢复的 Key 为 null。
+        status:
+          type: string
+          enum:
+          - active
+          - revoked
+          - expired
+          title: Status
+        expires_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Expires At
+        last_used_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Last Used At
+        revoked_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Revoked At
+        created_at:
           type: string
           format: date-time
-    ProjectMemberRequest:
+          title: Created At
       type: object
-      required: [role]
-      description: user_id 和 username 必须且只能提供一个，用于唯一定位目标用户。
+      required:
+      - id
+      - project_id
+      - name
+      - key_prefix
+      - key_last_four
+      - secret
+      - status
+      - expires_at
+      - last_used_at
+      - revoked_at
+      - created_at
+      title: ApiKeyResponse
+    ChatCompletionRequest:
       properties:
-        user_id:
-          type: [string, 'null']
-          format: uuid
-          description: 用户 UUID；与 username 二选一。
-        username:
-          type: [string, 'null']
-          minLength: 3
-          maxLength: 100
-          description: 唯一用户名；与 user_id 二选一。
+        model:
+          type: string
+          title: Model
+          description: 服务模型标识，例如 mock-chat。
+        messages:
+          items:
+            $ref: '#/components/schemas/ChatMessageRequest'
+          type: array
+          maxItems: 100
+          minItems: 1
+          title: Messages
+        max_tokens:
+          type: integer
+          maximum: 4096.0
+          minimum: 1.0
+          title: Max Tokens
+          description: 本请求生成上限，也用于额度预留。
+          default: 256
+        stream:
+          type: boolean
+          title: Stream
+          description: 是否以 Server-Sent Events 返回。
+          default: false
+        stream_options:
+          anyOf:
+          - additionalProperties:
+              type: boolean
+            type: object
+          - type: 'null'
+          title: Stream Options
+          description: 兼容 OpenAI 的 stream_options；支持 include_usage。
+      type: object
+      required:
+      - model
+      - messages
+      title: ChatCompletionRequest
+      description: LLM Mock 聊天请求。
+    ChatMessageRequest:
+      properties:
         role:
           type: string
-          enum: [editor, viewer]
-          description: 加入项目后的成员角色。
-    ProjectMemberResponse:
+          enum:
+          - system
+          - user
+          - assistant
+          title: Role
+          description: 消息角色。
+        content:
+          type: string
+          maxLength: 100000
+          minLength: 1
+          title: Content
+          description: 文本内容；服务端不持久化正文。
       type: object
-      required: [project_id, user_id, username, role, created_at, updated_at]
+      required:
+      - role
+      - content
+      title: ChatMessageRequest
+      description: 兼容 OpenAI chat completions 的单条文本消息。
+    CreateModelRequest:
+      properties:
+        model_code:
+          type: string
+          maxLength: 100
+          minLength: 1
+          title: Model Code
+          description: 网关调用方使用的模型标识。
+        upstream_model:
+          type: string
+          maxLength: 200
+          minLength: 1
+          title: Upstream Model
+          description: 供应商定义的模型标识。
+      type: object
+      required:
+      - model_code
+      - upstream_model
+      title: CreateModelRequest
+    CreateProviderRequest:
+      properties:
+        name:
+          type: string
+          maxLength: 100
+          minLength: 1
+          title: Name
+          description: 管理员自定义的供应商名称。
+        base_url:
+          type: string
+          maxLength: 500
+          title: Base Url
+          description: OpenAI 兼容 API Base URL，通常以 /v1 结尾。
+        api_key:
+          type: string
+          maxLength: 4000
+          minLength: 1
+          title: Api Key
+          description: 上游供应商 API Key，仅写入。
+      type: object
+      required:
+      - name
+      - base_url
+      - api_key
+      title: CreateProviderRequest
+    ErrorResponse:
+      properties:
+        code:
+          type: string
+          title: Code
+          description: 供调用方稳定判断的错误码。
+        message:
+          type: string
+          title: Message
+          description: 可安全展示的错误消息。
+        request_id:
+          type: string
+          title: Request Id
+          description: 用于关联服务端日志的请求标识。
+      type: object
+      required:
+      - code
+      - message
+      - request_id
+      title: ErrorResponse
+      description: 不暴露底层异常的公共错误响应。
+    HTTPValidationError:
+      properties:
+        detail:
+          items:
+            $ref: '#/components/schemas/ValidationError'
+          type: array
+          title: Detail
+      type: object
+      title: HTTPValidationError
+    HealthResponse:
+      properties:
+        status:
+          type: string
+          const: ok
+          title: Status
+          description: 当前探针状态。
+      type: object
+      required:
+      - status
+      title: HealthResponse
+      description: 健康检查成功响应。
+    LoginRequest:
+      properties:
+        username:
+          type: string
+          maxLength: 100
+          minLength: 1
+          title: Username
+        password:
+          type: string
+          maxLength: 256
+          minLength: 1
+          title: Password
+      type: object
+      required:
+      - username
+      - password
+      title: LoginRequest
+      description: 统一用户登录请求。
+    ModelResponse:
+      properties:
+        id:
+          type: string
+          format: uuid
+          title: Id
+        model_code:
+          type: string
+          title: Model Code
+          description: 调用方传给网关的公开模型名。
+        upstream_model:
+          type: string
+          title: Upstream Model
+          description: 发送给第三方供应商的模型名。
+        status:
+          type: string
+          enum:
+          - active
+          - disabled
+          title: Status
+      type: object
+      required:
+      - id
+      - model_code
+      - upstream_model
+      - status
+      title: ModelResponse
+      description: 网关公开模型及上游模型映射。
+    ProjectCreateRequest:
+      properties:
+        name:
+          type: string
+          maxLength: 100
+          minLength: 1
+          title: Name
+        description:
+          anyOf:
+          - type: string
+            maxLength: 2000
+          - type: 'null'
+          title: Description
+        visibility:
+          type: string
+          enum:
+          - public
+          - private
+          title: Visibility
+          default: private
+        tags:
+          items:
+            type: string
+            maxLength: 20
+            minLength: 1
+          type: array
+          maxItems: 5
+          title: Tags
+      type: object
+      required:
+      - name
+      title: ProjectCreateRequest
+    ProjectListResponse:
+      properties:
+        items:
+          items:
+            $ref: '#/components/schemas/ProjectResponse'
+          type: array
+          title: Items
+        total:
+          type: integer
+          title: Total
+        offset:
+          type: integer
+          title: Offset
+        limit:
+          type: integer
+          title: Limit
+      type: object
+      required:
+      - items
+      - total
+      - offset
+      - limit
+      title: ProjectListResponse
+    ProjectMemberRequest:
+      properties:
+        user_id:
+          anyOf:
+          - type: string
+            format: uuid
+          - type: 'null'
+          title: User Id
+          description: 目标用户 UUID；与 username 二选一。
+        username:
+          anyOf:
+          - type: string
+            maxLength: 100
+            minLength: 3
+          - type: 'null'
+          title: Username
+          description: 目标用户的唯一用户名；与 user_id 二选一。
+        role:
+          type: string
+          enum:
+          - editor
+          - viewer
+          title: Role
+          description: 授予用户的项目成员角色。
+      type: object
+      required:
+      - role
+      title: ProjectMemberRequest
+    ProjectMemberResponse:
       properties:
         project_id:
           type: string
           format: uuid
+          title: Project Id
+          description: 项目 UUID。
         user_id:
           type: string
           format: uuid
-          description: 成员用户 UUID，可用于后续成员操作。
+          title: User Id
+          description: 成员用户 UUID，可用于移除成员等后续操作。
         username:
           type: string
-          description: 成员唯一用户名。
+          title: Username
+          description: 成员的唯一用户名。
         role:
           type: string
-          enum: [owner, editor, viewer]
+          enum:
+          - owner
+          - editor
+          - viewer
+          title: Role
+          description: 成员在该项目中的角色。
         created_at:
           type: string
           format: date-time
+          title: Created At
+          description: 成员关系创建时间。
         updated_at:
           type: string
           format: date-time
-    ProjectMemberRoleUpdateRequest:
+          title: Updated At
+          description: 成员关系最近更新时间。
       type: object
-      required: [role]
+      required:
+      - project_id
+      - user_id
+      - username
+      - role
+      - created_at
+      - updated_at
+      title: ProjectMemberResponse
+    ProjectMemberRoleUpdateRequest:
       properties:
         role:
           type: string
-          enum: [editor, viewer]
-          description: 成员的新角色；owner 角色不能通过此接口变更。
-    ApiKeyCreateRequest:
+          enum:
+          - editor
+          - viewer
+          title: Role
+          description: 修改后的项目成员角色。
       type: object
-      required: [name]
+      required:
+      - role
+      title: ProjectMemberRoleUpdateRequest
+    ProjectResponse:
       properties:
+        id:
+          type: string
+          format: uuid
+          title: Id
         name:
           type: string
-          minLength: 1
-          maxLength: 100
-        expires_at:
-          type: [string, 'null']
+          title: Name
+        description:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Description
+        status:
+          type: string
+          enum:
+          - active
+          - inactive
+          title: Status
+        visibility:
+          type: string
+          enum:
+          - public
+          - private
+          title: Visibility
+        tags:
+          items:
+            type: string
+          type: array
+          title: Tags
+        owner_id:
+          type: string
+          format: uuid
+          title: Owner Id
+        created_at:
+          type: string
           format: date-time
-          description: 省略或 null 表示永不过期。
-    ApiKeyResponse:
+          title: Created At
+        updated_at:
+          type: string
+          format: date-time
+          title: Updated At
       type: object
-      required: [id, project_id, name, key_prefix, key_last_four, secret, status, expires_at, last_used_at, revoked_at, created_at]
-      properties:
-        id: { type: string, format: uuid }
-        project_id: { type: string, format: uuid }
-        name: { type: string }
-        key_prefix: { type: string, description: 用于检索和识别的 Key 前缀。 }
-        key_last_four: { type: string, minLength: 4, maxLength: 4 }
-        secret:
-          type: [string, 'null']
-          description: owner/editor 可见的完整 Key；旧版无法恢复的密钥为 null。
-        status: { type: string, enum: [active, revoked, expired] }
-        expires_at: { type: [string, 'null'], format: date-time }
-        last_used_at: { type: [string, 'null'], format: date-time }
-        revoked_at: { type: [string, 'null'], format: date-time }
-        created_at: { type: string, format: date-time }
-    ApiKeyCreatedResponse:
-      allOf:
-        - $ref: "#/components/schemas/ApiKeyResponse"
-        - type: object
-          required: [secret]
-          properties:
-            secret:
-              type: string
-              writeOnly: true
-              description: 完整 Key；owner/editor 可随时查看，数据库只保存加密密文。
-    ServiceCatalogResponse:
-      type: object
-      required: [code, name, models]
-      properties:
-        code: { type: string, example: mock-llm-v1, description: 稳定服务代码。 }
-        name: { type: string, description: 服务展示名称。 }
-        models:
-          type: array
-          items: { type: string }
-    ServiceApplicationRequest:
-      type: object
-      required: [service_code, monthly_token_limit]
-      properties:
-        service_code: { type: string, example: mock-llm-v1 }
-        monthly_token_limit: { type: integer, minimum: 1, description: 分配给项目的月 token 上限；不得超过用户可分配额度。 }
+      required:
+      - id
+      - name
+      - description
+      - status
+      - visibility
+      - tags
+      - owner_id
+      - created_at
+      - updated_at
+      title: ProjectResponse
     ProjectServiceAllocationRequest:
-      type: object
-      required: [monthly_token_limit]
       properties:
-        monthly_token_limit: { type: integer, minimum: 1, description: 新项目月度分配；不能低于当月已用与预留量。 }
+        monthly_token_limit:
+          type: integer
+          minimum: 1.0
+          title: Monthly Token Limit
+          description: 新的项目月度 token 上限；不能低于当月已用量或超出 owner 个人上限。
+      type: object
+      required:
+      - monthly_token_limit
+      title: ProjectServiceAllocationRequest
     ProjectServiceResponse:
-      type: object
-      required: [project_id, service_code, monthly_token_limit, status, period_start, tokens_used, tokens_reserved]
       properties:
-        project_id: { type: string, format: uuid }
-        service_code: { type: string }
-        monthly_token_limit: { type: integer }
-        status: { type: string, enum: [active, suspended] }
-        period_start: { type: string, format: date, description: 当前 UTC 月度用量周期起点。 }
-        tokens_used: { type: integer, description: 本周期已确认消耗。 }
-        tokens_reserved: { type: integer, description: 处理中请求的预留额度。 }
-    SetUserServiceQuotaRequest:
+        project_id:
+          type: string
+          format: uuid
+          title: Project Id
+          description: 订阅所属项目；调用方无需把该 ID 传给模型网关。
+        service_code:
+          type: string
+          title: Service Code
+          description: 服务目录代码。
+        monthly_token_limit:
+          type: integer
+          title: Monthly Token Limit
+          description: 每月 token 上限。
+        status:
+          type: string
+          enum:
+          - active
+          - suspended
+          title: Status
+          description: 服务订阅状态。
+        period_start:
+          type: string
+          title: Period Start
+          description: 当前用量周期起始日，UTC 月初。
+        tokens_used:
+          type: integer
+          title: Tokens Used
+          description: 本周期已确认消耗。
+        tokens_reserved:
+          type: integer
+          title: Tokens Reserved
+          description: 并发请求预留中 token。
       type: object
-      required: [monthly_token_limit]
+      required:
+      - project_id
+      - service_code
+      - monthly_token_limit
+      - status
+      - period_start
+      - tokens_used
+      - tokens_reserved
+      title: ProjectServiceResponse
+      description: 项目的有效服务订阅及当前 UTC 月用量。
+    ProjectUpdateRequest:
       properties:
-        monthly_token_limit: { type: integer, minimum: 0, description: 用户每月服务总上限；允许低于项目分配总额，0 会暂停调用且保留项目分配记录。 }
-    QuotaTargetResponse:
+        name:
+          anyOf:
+          - type: string
+            maxLength: 100
+            minLength: 1
+          - type: 'null'
+          title: Name
+        description:
+          anyOf:
+          - type: string
+            maxLength: 2000
+          - type: 'null'
+          title: Description
+        status:
+          anyOf:
+          - type: string
+            enum:
+            - active
+            - inactive
+          - type: 'null'
+          title: Status
+        visibility:
+          anyOf:
+          - type: string
+            enum:
+            - public
+            - private
+          - type: 'null'
+          title: Visibility
+        tags:
+          anyOf:
+          - items:
+              type: string
+              maxLength: 20
+              minLength: 1
+            type: array
+            maxItems: 5
+          - type: 'null'
+          title: Tags
       type: object
-      required: [id, username, role]
+      title: ProjectUpdateRequest
+    ProviderResponse:
       properties:
-        id: { type: string, format: uuid, description: 目标用户 ID。 }
-        username: { type: string, description: 唯一用户名。 }
-        role: { type: string, enum: [admin, user], description: 当前平台角色。 }
-    UserServiceQuotaResponse:
-      type: object
-      required: [service_code, name, models, monthly_token_limit, allocated_tokens, available_tokens, tokens_used, tokens_reserved]
-      properties:
-        service_code: { type: string, description: 当前服务代码。 }
-        name: { type: string, description: 服务展示名称。 }
-        models: { type: array, items: { type: string } }
-        monthly_token_limit: { type: integer, description: 管理员授予的用户月度上限；0 表示服务调用已暂停。 }
-        allocated_tokens: { type: integer, description: 已分配给该用户所有项目的额度总和；管理员可将用户上限调到此值以下。 }
-        available_tokens: { type: integer, description: 可继续分配给项目的余额；若项目分配已超过用户上限则为 0。 }
-        tokens_used: { type: integer, description: 该用户所有项目本月已确认消耗。 }
-        tokens_reserved: { type: integer, description: 该用户所有项目本月预留 token。 }
-    ChatCompletionRequest:
-      type: object
-      required: [model, messages]
-      properties:
-        model: { type: string, example: mock-chat }
-        messages:
+        id:
+          type: string
+          format: uuid
+          title: Id
+        name:
+          type: string
+          title: Name
+        base_url:
+          type: string
+          title: Base Url
+        status:
+          type: string
+          enum:
+          - active
+          - disabled
+          title: Status
+        api_key_configured:
+          type: boolean
+          title: Api Key Configured
+        last_tested_at:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Last Tested At
+        last_test_success:
+          anyOf:
+          - type: boolean
+          - type: 'null'
+          title: Last Test Success
+        last_test_message:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Last Test Message
+        models:
+          items:
+            $ref: '#/components/schemas/ModelResponse'
           type: array
-          minItems: 1
-          maxItems: 100
-          items: { $ref: "#/components/schemas/ChatMessage" }
-        max_tokens: { type: integer, minimum: 1, maximum: 4096, default: 256, description: 每次生成上限并用于预留额度。 }
-        stream: { type: boolean, default: false }
-        stream_options:
+          title: Models
+      type: object
+      required:
+      - id
+      - name
+      - base_url
+      - status
+      - api_key_configured
+      - last_tested_at
+      - last_test_success
+      - last_test_message
+      - models
+      title: ProviderResponse
+      description: 供应商可公开配置；永不包含其 API Key 或密文。
+    ProviderTestResponse:
+      properties:
+        success:
+          type: boolean
+          title: Success
+        message:
+          type: string
+          title: Message
+        tested_at:
+          type: string
+          title: Tested At
+      type: object
+      required:
+      - success
+      - message
+      - tested_at
+      title: ProviderTestResponse
+      description: 供应商连通性测试结果。
+    QuotaTargetResponse:
+      properties:
+        id:
+          type: string
+          format: uuid
+          title: Id
+          description: 目标用户 ID。
+        username:
+          type: string
+          title: Username
+          description: 唯一用户名。
+        role:
+          type: string
+          enum:
+          - admin
+          - user
+          title: Role
+          description: 当前平台角色。
+      type: object
+      required:
+      - id
+      - username
+      - role
+      title: QuotaTargetResponse
+      description: 最少字段的用户识别结果，禁止返回账户凭据。
+    RegisterRequest:
+      properties:
+        username:
+          type: string
+          maxLength: 100
+          minLength: 3
+          title: Username
+        password:
+          type: string
+          maxLength: 256
+          minLength: 8
+          title: Password
+      type: object
+      required:
+      - username
+      - password
+      title: RegisterRequest
+      description: 普通用户注册请求。
+    ServiceApplicationRequest:
+      properties:
+        service_code:
+          type: string
+          title: Service Code
+          description: 要申请的服务目录代码。
+        monthly_token_limit:
+          type: integer
+          minimum: 1.0
+          title: Monthly Token Limit
+          description: 分配给本项目的月度 token 上限；不能超过 owner 的个人可分配额度。
+      type: object
+      required:
+      - service_code
+      - monthly_token_limit
+      title: ServiceApplicationRequest
+    ServiceCatalogResponse:
+      properties:
+        code:
+          type: string
+          title: Code
+          description: 稳定服务代码。
+        name:
+          type: string
+          title: Name
+          description: 服务展示名称。
+        models:
+          items:
+            type: string
+          type: array
+          title: Models
+          description: 此服务包含的模型标识。
+      type: object
+      required:
+      - code
+      - name
+      - models
+      title: ServiceCatalogResponse
+      description: 目前可申请的服务目录项。
+    SetUserServiceQuotaRequest:
+      properties:
+        monthly_token_limit:
+          type: integer
+          minimum: 0.0
+          title: Monthly Token Limit
+          description: 用户每月服务总上限；允许低于项目分配总额，0 会暂停调用且保留项目分配记录。
+      type: object
+      required:
+      - monthly_token_limit
+      title: SetUserServiceQuotaRequest
+    TokenResponse:
+      properties:
+        access_token:
+          type: string
+          title: Access Token
+        token_type:
+          type: string
+          title: Token Type
+          default: bearer
+        expires_in:
+          type: integer
+          title: Expires In
+          description: 令牌有效期，单位为秒。
+      type: object
+      required:
+      - access_token
+      - expires_in
+      title: TokenResponse
+      description: 管理员访问令牌响应。
+    UpdateModelRequest:
+      properties:
+        model_code:
+          anyOf:
+          - type: string
+            maxLength: 100
+            minLength: 1
+          - type: 'null'
+          title: Model Code
+        upstream_model:
+          anyOf:
+          - type: string
+            maxLength: 200
+            minLength: 1
+          - type: 'null'
+          title: Upstream Model
+        status:
+          anyOf:
+          - type: string
+            enum:
+            - active
+            - disabled
+          - type: 'null'
+          title: Status
+      type: object
+      title: UpdateModelRequest
+    UpdateProviderRequest:
+      properties:
+        name:
+          anyOf:
+          - type: string
+            maxLength: 100
+            minLength: 1
+          - type: 'null'
+          title: Name
+        base_url:
+          anyOf:
+          - type: string
+            maxLength: 500
+          - type: 'null'
+          title: Base Url
+        api_key:
+          anyOf:
+          - type: string
+            maxLength: 4000
+          - type: 'null'
+          title: Api Key
+          description: 留空表示不轮换密钥。
+        status:
+          anyOf:
+          - type: string
+            enum:
+            - active
+            - disabled
+          - type: 'null'
+          title: Status
+      type: object
+      title: UpdateProviderRequest
+    UserResponse:
+      properties:
+        id:
+          type: string
+          title: Id
+        username:
+          type: string
+          title: Username
+        role:
+          type: string
+          title: Role
+      type: object
+      required:
+      - id
+      - username
+      - role
+      title: UserResponse
+      description: 当前用户公开信息。
+    UserServiceQuotaResponse:
+      properties:
+        service_code:
+          type: string
+          title: Service Code
+          description: 服务目录代码。
+        name:
+          type: string
+          title: Name
+          description: 服务展示名称。
+        models:
+          items:
+            type: string
+          type: array
+          title: Models
+          description: 服务包含的模型。
+        monthly_token_limit:
+          type: integer
+          title: Monthly Token Limit
+          description: 管理员授予的用户月度总上限；0 表示服务调用暂停，项目分配记录仍可保留。
+        allocated_tokens:
+          type: integer
+          title: Allocated Tokens
+          description: 已分配到该用户所有项目的额度合计。
+        available_tokens:
+          type: integer
+          title: Available Tokens
+          description: 还能分配给项目的额度。
+        tokens_used:
+          type: integer
+          title: Tokens Used
+          description: 该用户所有项目本月实际消耗合计。
+        tokens_reserved:
+          type: integer
+          title: Tokens Reserved
+          description: 该用户所有项目当前请求预留合计。
+      type: object
+      required:
+      - service_code
+      - name
+      - models
+      - monthly_token_limit
+      - allocated_tokens
+      - available_tokens
+      - tokens_used
+      - tokens_reserved
+      title: UserServiceQuotaResponse
+      description: 个人服务能力和跨项目额度分配概览。
+    ValidationError:
+      properties:
+        loc:
+          items:
+            anyOf:
+            - type: string
+            - type: integer
+          type: array
+          title: Location
+        msg:
+          type: string
+          title: Message
+        type:
+          type: string
+          title: Error Type
+        input:
+          title: Input
+        ctx:
           type: object
-          properties:
-            include_usage: { type: boolean, description: 在最后一个 SSE chunk 附带 token 用量。 }
-    ChatMessage:
+          title: Context
       type: object
-      required: [role, content]
-      properties:
-        role: { type: string, enum: [system, user, assistant] }
-        content: { type: string, minLength: 1, maxLength: 100000, description: 正文仅用于本次请求，不写入调用日志。 }
-    ChatCompletionResponse:
-      type: object
-      required: [id, object, created, model, choices, usage]
-      properties:
-        id: { type: string, description: 请求追踪 ID。 }
-        object: { type: string, enum: [chat.completion] }
-        created: { type: integer, description: Unix 时间戳。 }
-        model: { type: string }
-        choices: { type: array, items: { type: object } }
-        usage: { type: object, description: prompt/completion/total token 数。 }
+      required:
+      - loc
+      - msg
+      - type
+      title: ValidationError
+  securitySchemes:
+    HTTPBearer:
+      type: http
+      scheme: bearer

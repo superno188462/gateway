@@ -2,8 +2,8 @@
 
 import pytest
 
-from app.domain.llm import ChatMessage
-from app.infrastructure.mock_llm import MockLlmProvider, estimate_tokens
+from app.services.llm.domain import ChatMessage
+from app.services.llm.providers.mock import MockLlmProvider, estimate_tokens
 
 
 def test_token_estimation_counts_cjk_and_latin_words() -> None:

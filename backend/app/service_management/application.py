@@ -1,5 +1,6 @@
-"""项目 LLM Mock 服务目录、订阅与升级用例。"""
+"""通用服务目录、项目订阅与额度管理用例。"""
 
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from uuid import UUID
@@ -7,6 +8,7 @@ from uuid import UUID
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.domain.service_catalog import ServiceCatalogItem
 from app.infrastructure.db.models import (
     Project,
     ProjectMember,
@@ -31,15 +33,6 @@ class ServiceAccessConflictError(RuntimeError):
 
 class UserServiceQuotaExceededError(RuntimeError):
     """请求的项目分配额度超出用户上限或低于当前用量。"""
-
-
-@dataclass(frozen=True, slots=True)
-class ServiceCatalogItem:
-    """当前提供的服务和模型目录项。"""
-
-    code: str
-    name: str
-    models: tuple[str, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -78,23 +71,27 @@ class ProjectServiceInfo:
     tokens_reserved: int
 
 
-LLM_SERVICE = ServiceCatalogItem(
-    code="mock-llm-v1",
-    name="LLM Mock 服务",
-    models=("mock-chat",),
-)
-SERVICE_CATALOG = {LLM_SERVICE.code: LLM_SERVICE}
+class ProjectServiceManagement:
+    """管理服务目录、项目申请、额度分配和用量查询。"""
 
-
-class ProjectLlmService:
-    """为项目分配用户已获授的 LLM 月度 token 额度。"""
-
-    def __init__(self, session_factory: async_sessionmaker[AsyncSession]) -> None:
+    def __init__(
+        self,
+        session_factory: async_sessionmaker[AsyncSession],
+        catalog: tuple[ServiceCatalogItem, ...],
+        catalog_provider: Callable[[], Awaitable[tuple[ServiceCatalogItem, ...]]] | None = None,
+    ) -> None:
         self._session_factory = session_factory
+        self._catalog = catalog
+        self._catalog_provider = catalog_provider
+
+    async def _current_catalog(self) -> tuple[ServiceCatalogItem, ...]:
+        if self._catalog_provider is not None:
+            return await self._catalog_provider()
+        return self._catalog
 
     async def catalog(self) -> tuple[ServiceCatalogItem, ...]:
         """列出目前可申请的模型服务目录。"""
-        return tuple(SERVICE_CATALOG.values())
+        return await self._current_catalog()
 
     async def list_for_project(self, project_id: UUID, user: User) -> list[ProjectServiceInfo]:
         """列出项目已开通服务；项目成员和管理员可 review。"""
@@ -149,7 +146,9 @@ class ProjectLlmService:
         monthly_token_limit: int,
         applying: bool,
     ) -> None:
-        item = SERVICE_CATALOG.get(service_code)
+        item = next(
+            (item for item in await self._current_catalog() if item.code == service_code), None
+        )
         if item is None:
             raise ServiceAccessNotFoundError("服务不存在")
         if monthly_token_limit <= 0:
@@ -253,7 +252,7 @@ class ProjectLlmService:
             now = datetime.now(UTC)
             period_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
             items: list[UserServiceQuotaInfo] = []
-            for item in SERVICE_CATALOG.values():
+            for item in await self._current_catalog():
                 quota = await session.get(UserServiceQuota, (user_id, item.code))
                 allocated = (
                     await session.scalar(
@@ -302,7 +301,7 @@ class ProjectLlmService:
         self, user_id: UUID, service_code: str, monthly_token_limit: int
     ) -> UserServiceQuotaInfo:
         """管理员设定用户级服务月上限；低于项目分配时保留分配并由总额度限制调用。"""
-        if service_code not in SERVICE_CATALOG:
+        if not any(item.code == service_code for item in await self._current_catalog()):
             raise ServiceAccessNotFoundError("服务不存在")
         if monthly_token_limit < 0:
             raise ServiceAccessConflictError("月度额度不能小于 0")

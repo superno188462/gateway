@@ -117,9 +117,9 @@ async def test_llm_mock_access_chat_stream_quota_and_upgrade() -> None:
                         expires_at=admin_expires,
                     )
                 )
-        assert app.state.container.project_llm_service is not None
+        assert app.state.container.service_management is not None
         if admin_token is None:
-            await app.state.container.project_llm_service.set_user_limit(
+            await app.state.container.service_management.set_user_limit(
                 owner_id, "mock-llm-v1", 120_000
             )
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
@@ -190,7 +190,7 @@ async def test_llm_mock_access_chat_stream_quota_and_upgrade() -> None:
 
             catalog = await client.get("/api/admin/v1/services", headers=jwt_headers)
             assert catalog.status_code == 200
-            assert catalog.json()[0]["models"] == ["mock-chat"]
+            assert "mock-chat" in catalog.json()[0]["models"]
             personal = await client.get("/api/v1/me/services", headers=jwt_headers)
             assert personal.status_code == 200
             assert personal.json()[0]["monthly_token_limit"] == 120_000

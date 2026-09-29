@@ -1,4 +1,4 @@
-"""项目申请 LLM Mock 服务和查询服务额度的管理 API。"""
+"""服务目录、项目申请、个人额度和管理额度 API。"""
 
 from typing import Annotated, Literal
 from uuid import UUID
@@ -6,19 +6,19 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
-from app.application.llm_services import (
-    ProjectLlmService,
+from app.container import get_current_admin, get_current_user, get_service_management
+from app.domain.service_catalog import ServiceCatalogItem
+from app.infrastructure.db.models import User
+from app.service_management.application import (
     ProjectServiceInfo,
+    ProjectServiceManagement,
     ServiceAccessConflictError,
     ServiceAccessForbiddenError,
     ServiceAccessNotFoundError,
-    ServiceCatalogItem,
     UserQuotaTarget,
     UserServiceQuotaExceededError,
     UserServiceQuotaInfo,
 )
-from app.container import get_current_admin, get_current_user, get_project_llm_service
-from app.infrastructure.db.models import User
 
 router = APIRouter(prefix="/api/admin/v1", tags=["Project Services"])
 
@@ -140,9 +140,9 @@ def map_error(error: RuntimeError) -> HTTPException:
 @router.get("/services", response_model=list[ServiceCatalogResponse], summary="列出服务目录和模型")
 async def list_service_catalog(
     _: Annotated[User, Depends(get_current_user)],
-    service: Annotated[ProjectLlmService, Depends(get_project_llm_service)],
+    service: Annotated[ProjectServiceManagement, Depends(get_service_management)],
 ) -> list[ServiceCatalogResponse]:
-    """提供 LLM Mock 及当前额度档位。"""
+    """提供当前可申请的服务目录及额度档位。"""
     return [ServiceCatalogResponse.from_item(item) for item in await service.catalog()]
 
 
@@ -154,7 +154,7 @@ async def list_service_catalog(
 )
 async def lookup_quota_target(
     _: Annotated[User, Depends(get_current_admin)],
-    service: Annotated[ProjectLlmService, Depends(get_project_llm_service)],
+    service: Annotated[ProjectServiceManagement, Depends(get_service_management)],
     user_id: Annotated[
         UUID | None, Query(description="目标用户 UUID；与 username 二选一。")
     ] = None,
@@ -185,7 +185,7 @@ async def lookup_quota_target(
 async def get_user_service_quotas(
     user_id: UUID,
     _: Annotated[User, Depends(get_current_admin)],
-    service: Annotated[ProjectLlmService, Depends(get_project_llm_service)],
+    service: Annotated[ProjectServiceManagement, Depends(get_service_management)],
 ) -> list[UserServiceQuotaResponse]:
     """管理员查看指定用户的额度、项目分配及跨项目当月用量。"""
     try:
@@ -205,7 +205,7 @@ async def set_user_service_quota(
     service_code: str,
     payload: SetUserServiceQuotaRequest,
     _: Annotated[User, Depends(get_current_admin)],
-    service: Annotated[ProjectLlmService, Depends(get_project_llm_service)],
+    service: Annotated[ProjectServiceManagement, Depends(get_service_management)],
 ) -> UserServiceQuotaResponse:
     """管理员配置指定用户的服务级月额度。"""
     try:
@@ -227,7 +227,7 @@ account_router = APIRouter(prefix="/api/v1/me", tags=["My Services"])
 )
 async def list_my_services(
     current_user: Annotated[User, Depends(get_current_user)],
-    service: Annotated[ProjectLlmService, Depends(get_project_llm_service)],
+    service: Annotated[ProjectServiceManagement, Depends(get_service_management)],
 ) -> list[UserServiceQuotaResponse]:
     """返回服务目录中当前用户获授的额度、项目分配和当月用量。"""
     return [
@@ -244,7 +244,7 @@ async def list_my_services(
 async def list_project_services(
     project_id: UUID,
     current_user: Annotated[User, Depends(get_current_user)],
-    service: Annotated[ProjectLlmService, Depends(get_project_llm_service)],
+    service: Annotated[ProjectServiceManagement, Depends(get_service_management)],
 ) -> list[ProjectServiceResponse]:
     """项目成员、公开项目 review 用户和管理员可以查看；管理员只读。"""
     try:
@@ -264,7 +264,7 @@ async def apply_project_service(
     project_id: UUID,
     payload: ServiceApplicationRequest,
     current_user: Annotated[User, Depends(get_current_user)],
-    service: Annotated[ProjectLlmService, Depends(get_project_llm_service)],
+    service: Annotated[ProjectServiceManagement, Depends(get_service_management)],
 ) -> ProjectServiceResponse:
     """项目 owner 提交申请后自动开通，无支付流程。"""
     try:
@@ -296,7 +296,7 @@ async def update_project_service_allocation(
     service_code: str,
     payload: ProjectServiceAllocationRequest,
     current_user: Annotated[User, Depends(get_current_user)],
-    service: Annotated[ProjectLlmService, Depends(get_project_llm_service)],
+    service: Annotated[ProjectServiceManagement, Depends(get_service_management)],
 ) -> ProjectServiceResponse:
     """项目 owner 可调整项目额度；执行时校验个人可分配余额和当月已用量。"""
     try:

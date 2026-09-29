@@ -5,7 +5,17 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import UUID, uuid4
 
-from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Index, String, Text, func, text
+from sqlalchemy import (
+    CheckConstraint,
+    DateTime,
+    ForeignKey,
+    Index,
+    String,
+    Text,
+    UniqueConstraint,
+    func,
+    text,
+)
 from sqlalchemy.dialects.postgresql import UUID as PostgreSQLUUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -253,4 +263,57 @@ class GatewayRequest(Base):
     error_code: Mapped[str | None] = mapped_column(String(80))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class LlmProviderConfig(Base):
+    """管理员配置的 OpenAI 兼容供应商连接信息；API Key 仅保存密文。"""
+
+    __tablename__ = "llm_provider_configs"
+    __table_args__ = (
+        CheckConstraint("status IN ('active', 'disabled')", name="ck_llm_provider_configs_status"),
+        Index("ix_llm_provider_configs_status", "status"),
+    )
+
+    id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), primary_key=True, default=uuid4)
+    name: Mapped[str] = mapped_column(String(100), unique=True, nullable=False)
+    base_url: Mapped[str] = mapped_column(String(500), nullable=False)
+    encrypted_api_key: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, server_default="active")
+    last_tested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_test_success: Mapped[bool | None] = mapped_column()
+    last_test_message: Mapped[str | None] = mapped_column(String(250))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+
+class LlmModelConfig(Base):
+    """网关公开模型名到供应商上游模型名的映射。"""
+
+    __tablename__ = "llm_model_configs"
+    __table_args__ = (
+        CheckConstraint("status IN ('active', 'disabled')", name="ck_llm_model_configs_status"),
+        Index("ix_llm_model_configs_provider_id", "provider_id"),
+        Index("ix_llm_model_configs_model_code_status", "model_code", "status"),
+        UniqueConstraint("provider_id", "model_code", name="uq_llm_model_configs_provider_model"),
+    )
+
+    id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), primary_key=True, default=uuid4)
+    provider_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("llm_provider_configs.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    model_code: Mapped[str] = mapped_column(String(100), nullable=False)
+    upstream_model: Mapped[str] = mapped_column(String(200), nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, server_default="active")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
     )

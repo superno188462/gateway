@@ -4,21 +4,26 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import cast
 
+import httpx
 from fastapi import Depends, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from app.application.api_keys import ApiKeyService
 from app.application.auth import AdminBootstrapService, AuthService
-from app.application.llm_gateway import LlmGatewayService
-from app.application.llm_services import ProjectLlmService
 from app.application.projects import ProjectService
 from app.config import Settings
 from app.domain.health import ReadinessProbe
+from app.domain.service_catalog import ServiceCatalogItem
 from app.infrastructure.db.engine import SqlAlchemyReadinessProbe, create_database_engine
 from app.infrastructure.db.models import User
-from app.infrastructure.mock_llm import MockLlmProvider
 from app.security import JwtService, PasswordService
+from app.service_management.application import ProjectServiceManagement
+from app.services.llm.application import LlmGatewayService
+from app.services.llm.catalog import LLM_SERVICE
+from app.services.llm.configuration import LlmConfigurationService
+from app.services.llm.providers.openai_compatible import ConfiguredLlmProvider
+from app.services.llm.secrets import ProviderSecretCipher
 
 
 @dataclass(slots=True)
@@ -39,8 +44,10 @@ class AppContainer:
     auth_service: AuthService | None
     project_service: ProjectService | None
     api_key_service: ApiKeyService | None
-    project_llm_service: ProjectLlmService | None
+    service_management: ProjectServiceManagement | None
     llm_gateway_service: LlmGatewayService | None
+    llm_configuration_service: LlmConfigurationService | None
+    http_client: httpx.AsyncClient | None
 
     @classmethod
     def build(
@@ -64,14 +71,33 @@ class AppContainer:
                 auth_service=None,
                 project_service=None,
                 api_key_service=None,
-                project_llm_service=None,
+                service_management=None,
                 llm_gateway_service=None,
+                llm_configuration_service=None,
+                http_client=None,
             )
 
         database_engine = create_database_engine(settings.database_url)
         session_factory = async_sessionmaker(database_engine, expire_on_commit=False)
         password_service = PasswordService()
         jwt_service = JwtService(settings.jwt_secret_key, settings.jwt_access_token_expire_minutes)
+        http_client = httpx.AsyncClient(timeout=httpx.Timeout(60.0, connect=10.0))
+        llm_configuration_service = LlmConfigurationService(
+            session_factory,
+            ProviderSecretCipher(settings.llm_provider_secret_key.get_secret_value())
+            if settings.llm_provider_secret_key is not None
+            else None,
+        )
+
+        async def llm_catalog_provider() -> tuple[ServiceCatalogItem, ...]:
+            """把当前启用的公开模型名接入通用服务目录。"""
+            models = (
+                await llm_configuration_service.active_model_codes()
+                if llm_configuration_service is not None
+                else ("mock-chat",)
+            )
+            return (ServiceCatalogItem(LLM_SERVICE.code, LLM_SERVICE.name, models),)
+
         return cls(
             settings=settings,
             database_engine=database_engine,
@@ -97,8 +123,17 @@ class AppContainer:
                 if settings.api_key_secret_key is not None
                 else None
             ),
-            project_llm_service=ProjectLlmService(session_factory),
-            llm_gateway_service=LlmGatewayService(session_factory, MockLlmProvider()),
+            service_management=ProjectServiceManagement(
+                session_factory,
+                (LLM_SERVICE,),
+                catalog_provider=llm_catalog_provider,
+            ),
+            llm_gateway_service=LlmGatewayService(
+                session_factory,
+                ConfiguredLlmProvider(llm_configuration_service, http_client),
+            ),
+            llm_configuration_service=llm_configuration_service,
+            http_client=http_client,
         )
 
     async def startup(self) -> None:
@@ -110,6 +145,8 @@ class AppContainer:
         """释放容器拥有的异步资源。"""
         if self.database_engine is not None:
             await self.database_engine.dispose()
+        if self.http_client is not None:
+            await self.http_client.aclose()
 
 
 def get_container(request: Request) -> AppContainer:
@@ -165,11 +202,11 @@ def get_api_key_service(request: Request) -> ApiKeyService:
     return service
 
 
-def get_project_llm_service(request: Request) -> ProjectLlmService:
-    """注入个人服务额度和项目服务分配用例。"""
-    service = get_container(request).project_llm_service
+def get_service_management(request: Request) -> ProjectServiceManagement:
+    """注入服务目录、项目申请和额度管理用例。"""
+    service = get_container(request).service_management
     if service is None:
-        raise RuntimeError("项目 LLM 服务未注册")
+        raise RuntimeError("服务管理用例未注册")
     return service
 
 
@@ -179,6 +216,30 @@ def get_llm_gateway_service(request: Request) -> LlmGatewayService:
     if service is None:
         raise RuntimeError("LLM 网关服务未注册")
     return service
+
+
+def get_llm_configuration_service(request: Request) -> LlmConfigurationService:
+    """注入 LLM 供应商配置用例；未配置加密主密钥时禁用管理端点。"""
+    from fastapi import HTTPException, status
+
+    service = get_container(request).llm_configuration_service
+    if service is None or get_container(request).settings.llm_provider_secret_key is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "code": "llm_provider_config_unavailable",
+                "message": "请先配置 LLM_PROVIDER_SECRET_KEY",
+            },
+        )
+    return service
+
+
+def get_http_client(request: Request) -> httpx.AsyncClient:
+    """注入生命周期内共享的 HTTP 客户端。"""
+    client = get_container(request).http_client
+    if client is None:
+        raise RuntimeError("HTTP 客户端未注册")
+    return client
 
 
 bearer_scheme = HTTPBearer(auto_error=False)
