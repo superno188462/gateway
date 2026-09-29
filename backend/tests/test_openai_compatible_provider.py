@@ -6,7 +6,7 @@ import httpx
 import pytest
 
 from app.services.llm.configuration import ResolvedLlmModel
-from app.services.llm.domain import ChatMessage, ProviderParameterError
+from app.services.llm.domain import ChatMessage, ProviderCallError, ProviderParameterError
 from app.services.llm.providers.openai_compatible import ConfiguredLlmProvider
 
 
@@ -165,6 +165,59 @@ async def test_provider_reports_unsupported_parameter_status() -> None:
         provider = ConfiguredLlmProvider(FakeConfiguration(), client)  # type: ignore[arg-type]
         with pytest.raises(ProviderParameterError):
             await provider.complete("public-chat", [ChatMessage("user", "hi")], 30)
+
+
+@pytest.mark.asyncio
+async def test_provider_failure_exposes_safe_attempt_diagnostics() -> None:
+    class DiagnosticPoolConfiguration(FakeConfiguration):
+        async def resolve_model_pool(self, model_code: str) -> tuple[ResolvedLlmModel, ...]:
+            return (
+                ResolvedLlmModel(
+                    model_code=model_code,
+                    upstream_model=model_code,
+                    base_url="https://first.example.test/v1",
+                    api_key="secret-one",
+                    connection_name="Primary",
+                    supplier_name="Vendor A",
+                ),
+                ResolvedLlmModel(
+                    model_code=model_code,
+                    upstream_model=model_code,
+                    base_url="https://second.example.test/v1",
+                    api_key="secret-two",
+                    connection_name="Backup",
+                    supplier_name="Vendor B",
+                ),
+            )
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.host == "first.example.test":
+            return httpx.Response(
+                503,
+                json={"error": {"type": "server_error", "message": "private body"}},
+                headers={"x-request-id": "upstream-first"},
+            )
+        return httpx.Response(
+            404,
+            json={"error": {"code": "model_not_found", "message": "private body"}},
+            headers={"x-request-id": "upstream-second"},
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        provider = ConfiguredLlmProvider(DiagnosticPoolConfiguration(), client)  # type: ignore[arg-type]
+        with pytest.raises(ProviderCallError) as captured:
+            await provider.complete("public-chat", [ChatMessage("user", "do not log this")], 30)
+
+    error = captured.value
+    attempts = error.diagnostics["attempts"]
+    assert error.code == "upstream_http_404"
+    assert isinstance(attempts, list)
+    assert attempts[0]["connection_name"] == "Primary"
+    assert attempts[0]["upstream_status_code"] == 503
+    assert attempts[1]["supplier_name"] == "Vendor B"
+    assert attempts[1]["provider_error"] == "model_not_found"
+    assert "private body" not in str(error.diagnostics)
+    assert "secret-one" not in str(error.diagnostics)
 
 
 @pytest.mark.asyncio

@@ -56,6 +56,8 @@ class ResolvedLlmModel:
     upstream_model: str
     base_url: str
     api_key: str
+    connection_name: str = ""
+    supplier_name: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -413,6 +415,8 @@ class LlmConfigurationService:
             upstream_model=upstream_model,
             base_url=provider.base_url,
             api_key=self._require_cipher().decrypt(provider.encrypted_api_key),
+            connection_name=provider.name,
+            supplier_name=provider.supplier_name,
         )
 
     def _provider_info(self, provider: LlmProviderConfig) -> LlmProviderInfo:

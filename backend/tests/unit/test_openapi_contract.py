@@ -23,7 +23,7 @@ TEST_SETTINGS = Settings(
 )
 
 
-def test_committed_health_paths_match_generated_openapi() -> None:
+def test_committed_openapi_paths_match_generated_openapi() -> None:
     committed: dict[str, Any] = yaml.safe_load(CONTRACT_PATH.read_text(encoding="utf-8"))
     generated = create_app(settings=TEST_SETTINGS, readiness_probe=PassingProbe()).openapi()
 

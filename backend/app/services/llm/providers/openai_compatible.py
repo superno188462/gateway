@@ -1,5 +1,6 @@
 """OpenAI Chat Completions 兼容协议适配器。"""
 
+import logging
 from typing import cast
 
 import httpx
@@ -8,10 +9,12 @@ from app.services.llm.configuration import LlmConfigurationService, ResolvedLlmM
 from app.services.llm.domain import (
     ChatMessage,
     LlmProvider,
+    ProviderCallError,
     ProviderCompletion,
-    ProviderParameterError,
 )
 from app.services.llm.providers.mock import MockLlmProvider, estimate_tokens
+
+logger = logging.getLogger("gateway.llm.upstream")
 
 
 class ConfiguredLlmProvider(LlmProvider):
@@ -45,11 +48,19 @@ class ConfiguredLlmProvider(LlmProvider):
         if model == "mock-chat":
             return await self._mock.complete(model, messages, max_tokens, parameters)
         if self._configuration is None:
-            raise RuntimeError("尚未配置 LLM_PROVIDER_SECRET_KEY")
+            raise ProviderCallError(
+                "provider_configuration_missing",
+                "LLM 上游配置不可用，请检查服务端密钥配置",
+                {"attempts": []},
+            )
         routes = await self._configuration.resolve_model_pool(model)
         if not routes:
-            raise RuntimeError("模型配置已停用或不存在")
-        last_error: Exception | None = None
+            raise ProviderCallError(
+                "model_route_not_found",
+                "没有可用的上游连接，请检查模型前缀和连接状态",
+                {"attempts": []},
+            )
+        attempts: list[dict[str, object]] = []
         for resolved in routes:
             try:
                 return await self._complete_with_route(
@@ -57,6 +68,27 @@ class ConfiguredLlmProvider(LlmProvider):
                 )
             except httpx.HTTPStatusError as error:
                 status_code = error.response.status_code
+                attempt: dict[str, object] = {
+                    "connection_name": resolved.connection_name,
+                    "supplier_name": resolved.supplier_name,
+                    "failure_type": "http_status",
+                    "upstream_status_code": status_code,
+                    "upstream_request_id": self._upstream_request_id(error.response),
+                }
+                provider_error = self._provider_error_code(error.response)
+                if provider_error:
+                    attempt["provider_error"] = provider_error
+                attempts.append(attempt)
+                logger.warning(
+                    "upstream_attempt_failed supplier=%s connection=%s "
+                    "failure_type=http_status status=%d upstream_request_id=%s "
+                    "provider_error=%s",
+                    resolved.supplier_name or "unknown",
+                    resolved.connection_name or "unnamed",
+                    status_code,
+                    attempt.get("upstream_request_id") or "-",
+                    provider_error or "-",
+                )
                 retryable_status = status_code >= 500 or status_code in {
                     400,
                     401,
@@ -68,18 +100,99 @@ class ConfiguredLlmProvider(LlmProvider):
                     422,
                 }
                 if not retryable_status:
-                    raise
-                last_error = error
+                    raise self._call_error(status_code, attempts) from error
             except httpx.RequestError as error:
-                last_error = error
-        if isinstance(last_error, httpx.HTTPStatusError) and last_error.response.status_code in {
-            400,
-            422,
-        }:
-            raise ProviderParameterError(
-                "上游拒绝了请求参数或当前模型不支持这些参数"
-            ) from last_error
-        raise RuntimeError("LLM 上游连接池中的可用连接均调用失败") from last_error
+                failure_type = (
+                    "timeout"
+                    if isinstance(error, httpx.TimeoutException)
+                    else "connection_error"
+                    if isinstance(error, httpx.ConnectError)
+                    else "protocol_error"
+                    if isinstance(error, httpx.ProtocolError)
+                    else "request_error"
+                )
+                attempts.append(
+                    {
+                        "connection_name": resolved.connection_name,
+                        "supplier_name": resolved.supplier_name,
+                        "failure_type": failure_type,
+                    }
+                )
+                logger.warning(
+                    "upstream_attempt_failed supplier=%s connection=%s failure_type=%s",
+                    resolved.supplier_name or "unknown",
+                    resolved.connection_name or "unnamed",
+                    failure_type,
+                )
+        raise self._call_error(None, attempts)
+
+    @staticmethod
+    def _upstream_request_id(response: httpx.Response) -> str | None:
+        for header in ("x-request-id", "request-id", "x-client-request-id"):
+            value: str | None = response.headers.get(header)
+            if value:
+                return value[:200]
+        return None
+
+    @staticmethod
+    def _provider_error_code(response: httpx.Response) -> str | None:
+        try:
+            payload = cast(object, response.json())
+        except ValueError:
+            return None
+        if not isinstance(payload, dict):
+            return None
+        payload_dict = cast(dict[str, object], payload)
+        error = payload_dict.get("error")
+        if isinstance(error, dict):
+            error_dict = cast(dict[str, object], error)
+            value = error_dict.get("code") or error_dict.get("type")
+        else:
+            value = payload_dict.get("code")
+        if not isinstance(value, str):
+            return None
+        normalized = value.strip()
+        if not normalized or len(normalized) > 100:
+            return None
+        if not all(character.isalnum() or character in "._-" for character in normalized):
+            return None
+        return normalized
+
+    @staticmethod
+    def _call_error(
+        status_code: int | None, attempts: list[dict[str, object]]
+    ) -> ProviderCallError:
+        details: dict[str, object] = {"attempts": attempts}
+        if status_code is None and attempts:
+            last_status = attempts[-1].get("upstream_status_code")
+            if isinstance(last_status, int):
+                status_code = last_status
+        if status_code in {400, 422}:
+            return ProviderCallError(
+                f"upstream_http_{status_code}",
+                f"上游拒绝请求参数（HTTP {status_code}），请检查参数和模型支持情况",
+                details,
+                parameter_error=True,
+            )
+        if status_code is not None:
+            return ProviderCallError(
+                f"upstream_http_{status_code}",
+                f"所有可用上游连接均失败，最后一个上游返回 HTTP {status_code}",
+                details,
+            )
+        last_attempt = attempts[-1] if attempts else {}
+        failure_type = last_attempt.get("failure_type")
+        code = {
+            "timeout": "upstream_timeout",
+            "connection_error": "upstream_connection_error",
+            "protocol_error": "upstream_protocol_error",
+        }.get(str(failure_type), "upstream_request_error")
+        message = {
+            "timeout": "连接上游超时，请检查上游响应时间和网关超时设置",
+            "connection_error": "无法连接上游，请检查 Base URL、DNS 和网络策略",
+            "protocol_error": "上游连接协议异常，请检查 HTTPS/TLS 配置",
+        }.get(str(failure_type), "上游请求失败，请查看各连接的诊断信息")
+        return ProviderCallError(code, message, details)
 
     async def _complete_with_route(
         self,

@@ -1,6 +1,8 @@
 """LLM 网关用例：授权、额度预留、Provider 调用、结算和无正文用量记录。"""
 
+import asyncio
 import json
+import logging
 import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -12,20 +14,23 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.application.api_keys import VerifiedApiKey
 from app.infrastructure.db.models import (
-    GatewayRequest,
     Project,
     ProjectServiceSubscription,
     ServiceUsageBucket,
     User,
     UserServiceQuota,
 )
+from app.request_logging.application import GatewayRequestRecorder
 from app.services.llm.domain import (
     ChatMessage,
     LlmProvider,
+    ProviderCallError,
     ProviderCompletion,
     ProviderParameterError,
 )
 from app.services.llm.providers.mock import estimate_tokens
+
+logger = logging.getLogger("gateway.service.llm")
 
 
 class GatewayRequestError(RuntimeError):
@@ -58,9 +63,11 @@ class LlmGatewayService:
         self,
         session_factory: async_sessionmaker[AsyncSession],
         provider: LlmProvider,
+        request_recorder: GatewayRequestRecorder,
     ) -> None:
         self._session_factory = session_factory
         self._provider = provider
+        self._request_recorder = request_recorder
 
     async def complete(
         self,
@@ -69,23 +76,67 @@ class LlmGatewayService:
         messages: list[ChatMessage],
         max_tokens: int,
         parameters: dict[str, object] | None = None,
+        request_id: str | None = None,
     ) -> GatewayCompletion:
         """预留最大用量后调用 Provider，成功记实际用量，失败释放预留。"""
-        request_id = f"req_{uuid4().hex}"
+        request_id = request_id or f"req_{uuid4().hex}"
         started = time.perf_counter()
-        if not await self._provider.supports(model):
-            await self._write_request(
+        await self._request_recorder.start(
+            request_id=request_id,
+            project_id=api_key.project_id,
+            api_key_id=api_key.id,
+            service_code=self.service_code,
+            model=model,
+        )
+        try:
+            model_supported = await self._provider.supports(model)
+        except Exception as error:
+            logger.exception(
+                "audit_stage stage=routing result=failed request_id=%s model=%s "
+                "error_code=routing_error",
                 request_id,
-                api_key,
                 model,
+            )
+            await self._request_recorder.record_stage(
+                request_id, "routing", "failed", error_code="routing_error"
+            )
+            await self._request_recorder.finish(
+                request_id,
                 "failed",
-                0,
-                0,
-                0,
-                self._latency(started),
-                "model_not_found",
+                latency_ms=self._latency(started),
+                error_code="routing_error",
+                error_message="LLM 服务路由暂时不可用",
+                result_summary={"response_type": "error"},
+            )
+            raise GatewayRequestError(
+                "routing_error", "LLM 服务路由暂时不可用", 502, request_id
+            ) from error
+        if not model_supported:
+            logger.warning(
+                "audit_stage stage=routing result=failed request_id=%s model=%s "
+                "error_code=model_not_found",
+                request_id,
+                model,
+            )
+            await self._request_recorder.record_stage(
+                request_id,
+                "routing",
+                "failed",
+                error_code="model_not_found",
+            )
+            await self._request_recorder.finish(
+                request_id,
+                "failed",
+                latency_ms=self._latency(started),
+                error_code="model_not_found",
+                error_message="请求的模型不存在，或当前没有可用的上游路由",
             )
             raise GatewayRequestError("model_not_found", "请求的模型不存在", 404, request_id)
+        logger.info(
+            "audit_stage stage=routing result=allowed request_id=%s model=%s",
+            request_id,
+            model,
+        )
         prompt_tokens = estimate_tokens(
             json.dumps([message.as_payload() for message in messages], ensure_ascii=False)
         )
@@ -94,17 +145,47 @@ class LlmGatewayService:
         reservation = prompt_tokens + max_tokens * choice_count
         period_start = self._period_start()
         await self._reserve(api_key, request_id, model, period_start, reservation, started)
+        await self._request_recorder.record_stage(request_id, "routing", "allowed")
+        await self._request_recorder.record_stage(request_id, "service_call", "pending")
+        logger.info(
+            "audit_stage stage=service_call result=started request_id=%s model=%s",
+            request_id,
+            model,
+        )
         try:
             completion = await self._provider.complete(model, messages, max_tokens, parameters)
-        except ProviderParameterError as error:
-            await self._release_and_log(
+        except asyncio.CancelledError:
+            await self._release_usage(
                 api_key,
-                request_id,
-                model,
                 period_start,
                 reservation,
-                self._latency(started),
+                request_id=request_id,
+                latency_ms=self._latency(started),
+                error_code="request_cancelled",
+            )
+            raise
+        except ProviderCallError as error:
+            await self._release_usage(
+                api_key,
+                period_start,
+                reservation,
+                request_id=request_id,
+                latency_ms=self._latency(started),
+                error_code=error.code,
+                error_message=str(error),
+                error_details=error.diagnostics,
+            )
+            status_code = 400 if error.parameter_error else 502
+            raise GatewayRequestError(error.code, str(error), status_code, request_id) from error
+        except ProviderParameterError as error:
+            await self._release_usage(
+                api_key,
+                period_start,
+                reservation,
+                request_id=request_id,
+                latency_ms=self._latency(started),
                 error_code="upstream_invalid_parameters",
+                error_message=str(error),
             )
             raise GatewayRequestError(
                 "upstream_invalid_parameters",
@@ -113,20 +194,39 @@ class LlmGatewayService:
                 request_id,
             ) from error
         except Exception as error:
-            await self._release_and_log(
-                api_key, request_id, model, period_start, reservation, self._latency(started)
+            logger.exception(
+                "audit_stage stage=service_call result=failed request_id=%s model=%s "
+                "error_code=provider_error exception_type=%s",
+                request_id,
+                model,
+                type(error).__name__,
+            )
+            await self._release_usage(
+                api_key,
+                period_start,
+                reservation,
+                request_id=request_id,
+                latency_ms=self._latency(started),
+                error_code="provider_error",
+                error_message="LLM 上游服务暂时不可用，请检查供应商连接和网关日志",
             )
             raise GatewayRequestError(
                 "provider_error", "LLM 上游服务暂时不可用", 502, request_id
             ) from error
-        await self._settle_and_log(
+        await self._settle_usage(
             api_key,
-            request_id,
-            model,
             period_start,
             reservation,
             completion,
-            self._latency(started),
+            request_id=request_id,
+            latency_ms=self._latency(started),
+        )
+        logger.info(
+            "audit_stage stage=service_call result=succeeded request_id=%s model=%s "
+            "total_tokens=%d",
+            request_id,
+            model,
+            completion.prompt_tokens + completion.completion_tokens,
         )
         return GatewayCompletion(request_id, model, completion)
 
@@ -140,23 +240,21 @@ class LlmGatewayService:
         started: float,
     ) -> None:
         rejection: GatewayRequestError | None = None
+        audit_context: dict[str, object] = {
+            "requested_tokens": reservation,
+            "user_monthly_limit": None,
+            "user_tokens_used": None,
+            "user_tokens_reserved": None,
+            "project_monthly_limit": None,
+            "project_tokens_used": None,
+            "project_tokens_reserved": None,
+        }
         async with self._session_factory.begin() as session:
             owner_id = await session.scalar(
                 select(Project.owner_id).where(Project.id == api_key.project_id)
             )
             if owner_id is None:
-                await self._add_log(
-                    session,
-                    request_id,
-                    api_key,
-                    model,
-                    "denied",
-                    0,
-                    0,
-                    0,
-                    self._latency(started),
-                    "project_not_found",
-                )
+                audit_context["decision"] = "project_not_found"
                 rejection = GatewayRequestError(
                     "project_not_found", "API Key 所属项目不存在", 403, request_id
                 )
@@ -181,34 +279,12 @@ class LlmGatewayService:
                     .with_for_update()
                 )
                 if user_quota is None:
-                    await self._add_log(
-                        session,
-                        request_id,
-                        api_key,
-                        model,
-                        "denied",
-                        0,
-                        0,
-                        0,
-                        self._latency(started),
-                        "user_quota_missing",
-                    )
+                    audit_context["decision"] = "user_quota_missing"
                     rejection = GatewayRequestError(
                         "user_quota_missing", "项目 owner 尚未获得该服务额度", 403, request_id
                     )
                 elif subscription is None:
-                    await self._add_log(
-                        session,
-                        request_id,
-                        api_key,
-                        model,
-                        "denied",
-                        0,
-                        0,
-                        0,
-                        self._latency(started),
-                        "service_not_enabled",
-                    )
+                    audit_context["decision"] = "service_not_enabled"
                     rejection = GatewayRequestError(
                         "service_not_enabled", "项目尚未申请 LLM Mock 服务", 403, request_id
                     )
@@ -235,6 +311,14 @@ class LlmGatewayService:
                         .with_for_update()
                     )
                     assert bucket is not None
+                    audit_context.update(
+                        {
+                            "user_monthly_limit": user_quota.monthly_token_limit,
+                            "project_monthly_limit": subscription.monthly_token_limit,
+                            "project_tokens_used": bucket.tokens_used,
+                            "project_tokens_reserved": bucket.tokens_reserved,
+                        }
+                    )
                     usage = await session.execute(
                         select(
                             func.coalesce(func.sum(ServiceUsageBucket.tokens_used), 0),
@@ -248,22 +332,17 @@ class LlmGatewayService:
                         )
                     )
                     user_tokens_used, user_tokens_reserved = usage.one()
+                    audit_context.update(
+                        {
+                            "user_tokens_used": user_tokens_used,
+                            "user_tokens_reserved": user_tokens_reserved,
+                        }
+                    )
                     if (
                         user_tokens_used + user_tokens_reserved + reservation
                         > user_quota.monthly_token_limit
                     ):
-                        await self._add_log(
-                            session,
-                            request_id,
-                            api_key,
-                            model,
-                            "denied",
-                            0,
-                            0,
-                            0,
-                            self._latency(started),
-                            "user_quota_exceeded",
-                        )
+                        audit_context["decision"] = "user_quota_exceeded"
                         rejection = GatewayRequestError(
                             "user_quota_exceeded", "用户本月 LLM token 总额度不足", 429, request_id
                         )
@@ -271,34 +350,55 @@ class LlmGatewayService:
                         bucket.tokens_used + bucket.tokens_reserved + reservation
                         > subscription.monthly_token_limit
                     ):
-                        await self._add_log(
-                            session,
-                            request_id,
-                            api_key,
-                            model,
-                            "denied",
-                            0,
-                            0,
-                            0,
-                            self._latency(started),
-                            "project_quota_exceeded",
-                        )
+                        audit_context["decision"] = "project_quota_exceeded"
                         rejection = GatewayRequestError(
                             "project_quota_exceeded", "项目本月 token 分配额度不足", 429, request_id
                         )
                     else:
+                        audit_context["decision"] = "allowed"
                         bucket.tokens_reserved += reservation
+            if rejection is not None:
+                await self._request_recorder.record_stage_in_session(
+                    session, request_id, "quota", "denied", error_code=rejection.code
+                )
+                await self._request_recorder.finish_in_session(
+                    session,
+                    request_id,
+                    "denied",
+                    latency_ms=self._latency(started),
+                    error_code=rejection.code,
+                    error_message=str(rejection),
+                    result_summary={"response_type": "error"},
+                )
+            else:
+                await self._request_recorder.record_stage_in_session(
+                    session, request_id, "quota", "allowed"
+                )
         if rejection is not None:
+            logger.warning(
+                "audit_stage stage=quota result=denied request_id=%s model=%s "
+                "error_code=%s details=%s",
+                request_id,
+                model,
+                rejection.code,
+                json.dumps(audit_context, ensure_ascii=False, sort_keys=True),
+            )
             raise rejection
+        logger.info(
+            "audit_stage stage=quota result=allowed request_id=%s model=%s details=%s",
+            request_id,
+            model,
+            json.dumps(audit_context, ensure_ascii=False, sort_keys=True),
+        )
 
-    async def _settle_and_log(
+    async def _settle_usage(
         self,
         api_key: VerifiedApiKey,
-        request_id: str,
-        model: str,
         period_start: datetime,
         reservation: int,
         completion: ProviderCompletion,
+        *,
+        request_id: str,
         latency_ms: int,
     ) -> None:
         async with self._session_factory.begin() as session:
@@ -315,29 +415,47 @@ class LlmGatewayService:
             used = completion.prompt_tokens + completion.completion_tokens
             bucket.tokens_reserved = max(0, bucket.tokens_reserved - reservation)
             bucket.tokens_used += used
-            await self._add_log(
+            await self._request_recorder.record_stage_in_session(
+                session, request_id, "service_call", "succeeded"
+            )
+            await self._request_recorder.finish_in_session(
                 session,
                 request_id,
-                api_key,
-                model,
                 "succeeded",
-                completion.prompt_tokens,
-                completion.completion_tokens,
-                used,
-                latency_ms,
-                None,
+                latency_ms=latency_ms,
+                usage_metrics={
+                    "input_tokens": completion.prompt_tokens,
+                    "output_tokens": completion.completion_tokens,
+                    "total_tokens": used,
+                    "unit": "tokens",
+                },
+                result_summary={
+                    "response_type": "chat.completion",
+                    "finish_reason": completion.finish_reason,
+                },
+                prompt_tokens=completion.prompt_tokens,
+                completion_tokens=completion.completion_tokens,
+                total_tokens=used,
             )
 
-    async def _release_and_log(
+    async def _release_usage(
         self,
         api_key: VerifiedApiKey,
-        request_id: str,
-        model: str,
         period_start: datetime,
         reservation: int,
+        *,
+        request_id: str,
         latency_ms: int,
-        error_code: str = "provider_error",
+        error_code: str,
+        error_message: str | None = None,
+        error_details: dict[str, object] | None = None,
     ) -> None:
+        logger.error(
+            "audit_stage stage=service_call result=failed request_id=%s error_code=%s message=%s",
+            request_id,
+            error_code,
+            error_message or "LLM service call failed",
+        )
         async with self._session_factory.begin() as session:
             bucket = await session.scalar(
                 select(ServiceUsageBucket)
@@ -350,64 +468,19 @@ class LlmGatewayService:
             )
             if bucket is not None:
                 bucket.tokens_reserved = max(0, bucket.tokens_reserved - reservation)
-            await self._add_log(
-                session, request_id, api_key, model, "failed", 0, 0, 0, latency_ms, error_code
+            await self._request_recorder.record_stage_in_session(
+                session, request_id, "service_call", "failed", error_code=error_code
             )
-
-    async def _write_request(
-        self,
-        request_id: str,
-        api_key: VerifiedApiKey,
-        model: str,
-        status: str,
-        prompt_tokens: int,
-        completion_tokens: int,
-        total_tokens: int,
-        latency_ms: int,
-        error_code: str | None,
-    ) -> None:
-        async with self._session_factory.begin() as session:
-            await self._add_log(
+            await self._request_recorder.finish_in_session(
                 session,
                 request_id,
-                api_key,
-                model,
-                status,
-                prompt_tokens,
-                completion_tokens,
-                total_tokens,
-                latency_ms,
-                error_code,
-            )
-
-    async def _add_log(
-        self,
-        session: AsyncSession,
-        request_id: str,
-        api_key: VerifiedApiKey,
-        model: str,
-        status: str,
-        prompt_tokens: int,
-        completion_tokens: int,
-        total_tokens: int,
-        latency_ms: int,
-        error_code: str | None,
-    ) -> None:
-        session.add(
-            GatewayRequest(
-                request_id=request_id,
-                project_id=api_key.project_id,
-                api_key_id=api_key.id,
-                service_code=self.service_code,
-                model=model,
-                status=status,
-                prompt_tokens=prompt_tokens,
-                completion_tokens=completion_tokens,
-                total_tokens=total_tokens,
+                "failed",
                 latency_ms=latency_ms,
                 error_code=error_code,
+                error_message=error_message,
+                error_details=error_details,
+                result_summary={"response_type": "error"},
             )
-        )
 
     @staticmethod
     def _period_start() -> datetime:

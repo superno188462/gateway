@@ -78,9 +78,11 @@ async def test_provider_admin_http_endpoints_and_permissions() -> None:
         from app.services.llm.providers.openai_compatible import ConfiguredLlmProvider
 
         assert container.session_factory is not None
+        assert container.request_recorder is not None
         container.llm_gateway_service = LlmGatewayService(
             container.session_factory,
             ConfiguredLlmProvider(container.llm_configuration_service, container.http_client),
+            container.request_recorder,
         )
 
     created_provider_ids: list[UUID] = []

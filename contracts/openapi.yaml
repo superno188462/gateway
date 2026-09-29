@@ -1053,6 +1053,521 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+  /api/v1/usage/summary:
+    get:
+      tags:
+      - Request Logs and Usage
+      summary: 查询调用用量汇总
+      description: 管理员查看全局数据；普通用户仅查看可访问项目的数据。
+      operationId: usage_summary_api_v1_usage_summary_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: start_at
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          description: UTC 开始时间，包含。默认最近 7 天。
+          title: Start At
+        description: UTC 开始时间，包含。默认最近 7 天。
+      - name: end_at
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          description: UTC 结束时间，不包含。默认当前时间。
+          title: End At
+        description: UTC 结束时间，不包含。默认当前时间。
+      - name: project_id
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            format: uuid
+          - type: 'null'
+          description: 可选项目筛选。
+          title: Project Id
+        description: 可选项目筛选。
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RequestUsageSummaryResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v1/projects/{project_id}/requests:
+    get:
+      tags:
+      - Request Logs and Usage
+      summary: 按页码查询项目调用日志
+      description: 只有拥有项目查看权限的用户才能查询该项目日志。
+      operationId: list_requests_api_v1_projects__project_id__requests_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: project_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Project Id
+      - name: start_at
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          description: UTC 开始时间，包含。默认最近 7 天。
+          title: Start At
+        description: UTC 开始时间，包含。默认最近 7 天。
+      - name: end_at
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          description: UTC 结束时间，不包含。默认当前时间。
+          title: End At
+        description: UTC 结束时间，不包含。默认当前时间。
+      - name: status
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - enum:
+            - received
+            - succeeded
+            - failed
+            - denied
+            type: string
+          - type: 'null'
+          description: 请求状态筛选。
+          title: Status
+        description: 请求状态筛选。
+      - name: service_code
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            maxLength: 50
+          - type: 'null'
+          title: Service Code
+      - name: model
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            maxLength: 100
+          - type: 'null'
+          description: 模型名包含筛选。
+          title: Model
+        description: 模型名包含筛选。
+      - name: request_id
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            maxLength: 64
+          - type: 'null'
+          description: 请求 ID 精确筛选。
+          title: Request Id
+        description: 请求 ID 精确筛选。
+      - name: cursor
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            maxLength: 512
+          - type: 'null'
+          description: 上一页返回的游标。
+          title: Cursor
+        description: 上一页返回的游标。
+      - name: page
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 1
+          description: 从 1 开始的页码。
+          default: 1
+          title: Page
+        description: 从 1 开始的页码。
+      - name: page_size
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 100
+          minimum: 1
+          description: 每页条数，最大 100。
+          default: 50
+          title: Page Size
+        description: 每页条数，最大 100。
+      - name: limit
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: integer
+            maximum: 100
+            minimum: 1
+          - type: 'null'
+          deprecated: true
+          title: Limit
+        deprecated: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RequestLogPageResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v1/projects/{project_id}/requests/{request_id}:
+    get:
+      tags:
+      - Request Logs and Usage
+      summary: 查询单条调用日志
+      description: 仅对可访问项目的成员或管理员返回该请求元数据。
+      operationId: get_request_api_v1_projects__project_id__requests__request_id__get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: project_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Project Id
+      - name: request_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Request Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RequestLogResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/admin/v1/requests:
+    get:
+      tags:
+      - Request Log Retention
+      summary: 管理员查询全局调用日志
+      description: 仅管理员可查全局调用日志；所有筛选条件均由后端执行。
+      operationId: list_all_requests_api_admin_v1_requests_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: start_at
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          description: UTC 开始时间，包含。默认最近 7 天。
+          title: Start At
+        description: UTC 开始时间，包含。默认最近 7 天。
+      - name: end_at
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          description: UTC 结束时间，不包含。默认当前时间。
+          title: End At
+        description: UTC 结束时间，不包含。默认当前时间。
+      - name: project_id
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            format: uuid
+          - type: 'null'
+          description: 可选项目筛选。
+          title: Project Id
+        description: 可选项目筛选。
+      - name: status
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - enum:
+            - received
+            - succeeded
+            - failed
+            - denied
+            type: string
+          - type: 'null'
+          description: 请求状态筛选。
+          title: Status
+        description: 请求状态筛选。
+      - name: service_code
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            maxLength: 50
+          - type: 'null'
+          title: Service Code
+      - name: model
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            maxLength: 100
+          - type: 'null'
+          title: Model
+      - name: request_id
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            maxLength: 64
+          - type: 'null'
+          title: Request Id
+      - name: cursor
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            maxLength: 512
+          - type: 'null'
+          title: Cursor
+      - name: page
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 1
+          description: 从 1 开始的页码。
+          default: 1
+          title: Page
+        description: 从 1 开始的页码。
+      - name: page_size
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 100
+          minimum: 1
+          description: 每页条数，最大 100。
+          default: 50
+          title: Page Size
+        description: 每页条数，最大 100。
+      - name: limit
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: integer
+            maximum: 100
+            minimum: 1
+          - type: 'null'
+          deprecated: true
+          title: Limit
+        deprecated: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RequestLogPageResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/admin/v1/requests/logs/{request_id}:
+    get:
+      tags:
+      - Request Log Retention
+      summary: 管理员查询单条调用日志
+      description: 管理员按 Request ID 查询脱敏详情，包括已删除项目的历史记录。
+      operationId: get_any_request_api_admin_v1_requests_logs__request_id__get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: request_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Request Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RequestLogResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/admin/v1/requests/retention:
+    get:
+      tags:
+      - Request Log Retention
+      summary: 查询最近日志保留任务
+      description: 管理员查看自动保留任务最近一次状态。
+      operationId: latest_retention_run_api_admin_v1_requests_retention_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                anyOf:
+                - $ref: '#/components/schemas/RetentionRunResponse'
+                - type: 'null'
+                title: Response Latest Retention Run Api Admin V1 Requests Retention
+                  Get
+      security:
+      - HTTPBearer: []
+  /api/admin/v1/requests/retention/run:
+    post:
+      tags:
+      - Request Log Retention
+      summary: 立即执行日志保留任务
+      description: 手动清理 30 天之外且不在全局最新 10,000 条内的日志。
+      operationId: run_retention_api_admin_v1_requests_retention_run_post
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RetentionRunResponse'
+      security:
+      - HTTPBearer: []
+  /api/admin/v1/system-logs:
+    get:
+      tags:
+      - System Logs
+      summary: 管理员查询应用技术日志
+      description: 按页返回最近匹配的技术日志，仅管理员可调用。
+      operationId: list_technical_logs_api_admin_v1_system_logs_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: level
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - enum:
+            - DEBUG
+            - INFO
+            - WARNING
+            - ERROR
+            - CRITICAL
+            type: string
+          - type: 'null'
+          description: 按日志等级精确筛选。
+          title: Level
+        description: 按日志等级精确筛选。
+      - name: trace_id
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            maxLength: 64
+          - type: 'null'
+          title: Trace Id
+      - name: query
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            maxLength: 200
+          - type: 'null'
+          description: 事件文本模糊筛选。
+          title: Query
+        description: 事件文本模糊筛选。
+      - name: page
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 1
+          default: 1
+          title: Page
+      - name: page_size
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 100
+          minimum: 1
+          default: 50
+          title: Page Size
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TechnicalLogPageResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
 components:
   schemas:
     ApiKeyCreateRequest:
@@ -1961,6 +2476,227 @@ components:
       - password
       title: RegisterRequest
       description: 普通用户注册请求。
+    RequestLogPageResponse:
+      properties:
+        items:
+          items:
+            $ref: '#/components/schemas/RequestLogResponse'
+          type: array
+          title: Items
+        next_cursor:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Next Cursor
+        page:
+          type: integer
+          title: Page
+        page_size:
+          type: integer
+          title: Page Size
+        total_count:
+          type: integer
+          title: Total Count
+        total_pages:
+          type: integer
+          title: Total Pages
+      type: object
+      required:
+      - items
+      - next_cursor
+      - page
+      - page_size
+      - total_count
+      - total_pages
+      title: RequestLogPageResponse
+      description: 数据库分页响应，明确返回页码、页容量、匹配总数和总页数。
+    RequestLogResponse:
+      properties:
+        request_id:
+          type: string
+          title: Request Id
+        trace_id:
+          type: string
+          title: Trace Id
+        project_id:
+          anyOf:
+          - type: string
+            format: uuid
+          - type: 'null'
+          title: Project Id
+        project_name:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Project Name
+        service_code:
+          type: string
+          title: Service Code
+        model:
+          type: string
+          title: Model
+        status:
+          type: string
+          title: Status
+        prompt_tokens:
+          type: integer
+          title: Prompt Tokens
+        completion_tokens:
+          type: integer
+          title: Completion Tokens
+        total_tokens:
+          type: integer
+          title: Total Tokens
+        latency_ms:
+          type: integer
+          title: Latency Ms
+        error_code:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Error Code
+        error_message:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Error Message
+        created_at:
+          type: string
+          format: date-time
+          title: Created At
+      type: object
+      required:
+      - request_id
+      - trace_id
+      - project_id
+      - project_name
+      - service_code
+      - model
+      - status
+      - prompt_tokens
+      - completion_tokens
+      - total_tokens
+      - latency_ms
+      - error_code
+      - error_message
+      - created_at
+      title: RequestLogResponse
+      description: 隐私安全的请求元数据，不包含 Authorization、提示词和回复正文。
+    RequestUsageSummaryResponse:
+      properties:
+        start_at:
+          type: string
+          format: date-time
+          title: Start At
+        end_at:
+          type: string
+          format: date-time
+          title: End At
+        request_count:
+          type: integer
+          title: Request Count
+        succeeded_count:
+          type: integer
+          title: Succeeded Count
+        failed_count:
+          type: integer
+          title: Failed Count
+        denied_count:
+          type: integer
+          title: Denied Count
+        prompt_tokens:
+          type: integer
+          title: Prompt Tokens
+        completion_tokens:
+          type: integer
+          title: Completion Tokens
+        total_tokens:
+          type: integer
+          title: Total Tokens
+        average_latency_ms:
+          type: integer
+          title: Average Latency Ms
+        cost_cny:
+          type: 'null'
+          title: Cost Cny
+          description: 暂无模型定价时固定为 null，客户端应显示 -。
+        by_model:
+          items:
+            additionalProperties:
+              anyOf:
+              - type: integer
+              - type: string
+            type: object
+          type: array
+          title: By Model
+        by_day:
+          items:
+            additionalProperties:
+              anyOf:
+              - type: string
+                format: date
+              - type: integer
+            type: object
+          type: array
+          title: By Day
+      type: object
+      required:
+      - start_at
+      - end_at
+      - request_count
+      - succeeded_count
+      - failed_count
+      - denied_count
+      - prompt_tokens
+      - completion_tokens
+      - total_tokens
+      - average_latency_ms
+      - cost_cny
+      - by_model
+      - by_day
+      title: RequestUsageSummaryResponse
+      description: 指定 UTC 时间和项目筛选范围内的调用汇总。
+    RetentionRunResponse:
+      properties:
+        id:
+          type: string
+          format: uuid
+          title: Id
+        status:
+          type: string
+          enum:
+          - running
+          - succeeded
+          - failed
+          title: Status
+        started_at:
+          type: string
+          format: date-time
+          title: Started At
+        finished_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Finished At
+        deleted_count:
+          type: integer
+          title: Deleted Count
+        error_code:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Error Code
+      type: object
+      required:
+      - id
+      - status
+      - started_at
+      - finished_at
+      - deleted_count
+      - error_code
+      title: RetentionRunResponse
+      description: 日志保留任务状态，不暴露异常详情或数据库错误。
     ServiceApplicationRequest:
       properties:
         service_code:
@@ -2023,6 +2759,64 @@ components:
       type: object
       title: StreamOptionsRequest
       description: 网关支持的流式选项；供应商标准中尚未实现的选项会被拒绝。
+    TechnicalLogEntryResponse:
+      properties:
+        timestamp:
+          type: string
+          title: Timestamp
+        level:
+          type: string
+          title: Level
+        source:
+          type: string
+          title: Source
+        trace_id:
+          type: string
+          title: Trace Id
+        message:
+          type: string
+          title: Message
+      type: object
+      required:
+      - timestamp
+      - level
+      - source
+      - trace_id
+      - message
+      title: TechnicalLogEntryResponse
+      description: 一行标准技术日志。
+    TechnicalLogPageResponse:
+      properties:
+        entries:
+          items:
+            $ref: '#/components/schemas/TechnicalLogEntryResponse'
+          type: array
+          title: Entries
+        log_file:
+          type: string
+          title: Log File
+        page:
+          type: integer
+          title: Page
+        page_size:
+          type: integer
+          title: Page Size
+        total_count:
+          type: integer
+          title: Total Count
+        total_pages:
+          type: integer
+          title: Total Pages
+      type: object
+      required:
+      - entries
+      - log_file
+      - page
+      - page_size
+      - total_count
+      - total_pages
+      title: TechnicalLogPageResponse
+      description: 技术日志分页响应，返回页码、页容量、匹配总数和总页数。
     TokenResponse:
       properties:
         access_token:

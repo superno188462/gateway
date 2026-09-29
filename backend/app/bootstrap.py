@@ -1,9 +1,13 @@
 """应用组合根。"""
 
-from collections.abc import AsyncIterator
+import logging
+import re
+import time
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
+from uuid import uuid4
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request, Response
 
 from app.api.api_keys import router as api_keys_router
 from app.api.auth import router as auth_router
@@ -17,6 +21,13 @@ from app.service_management.api import router as llm_services_router
 from app.services.llm.admin_api import public_router as llm_models_router
 from app.services.llm.admin_api import router as llm_provider_admin_router
 from app.services.llm.api import router as llm_gateway_router
+from app.technical_logging import configure_file_logging, reset_trace_id, set_trace_id
+from app.technical_logging_api import router as technical_logging_router
+from app.usage.api import admin_router as request_log_admin_router
+from app.usage.api import router as request_log_router
+
+logger = logging.getLogger("gateway.http")
+_TRACE_ID_PATTERN = re.compile(r"^[A-Za-z0-9._:-]{1,64}$")
 
 
 def create_app(
@@ -29,6 +40,11 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+        configure_file_logging(
+            resolved_settings.log_file_path,
+            resolved_settings.log_level,
+            resolved_settings.log_backup_count,
+        )
         await container.startup()
         yield
         await container.close()
@@ -40,6 +56,51 @@ def create_app(
         lifespan=lifespan,
     )
     app.state.container = container
+
+    @app.middleware("http")
+    async def trace_and_log_request(
+        request: Request, call_next: Callable[[Request], Awaitable[Response]]
+    ) -> Response:
+        incoming = request.headers.get("x-trace-id") or request.headers.get("x-request-id")
+        trace_id = (
+            incoming
+            if incoming and _TRACE_ID_PATTERN.fullmatch(incoming)
+            else f"trace_{uuid4().hex}"
+        )
+        request.state.trace_id = trace_id
+        context_token = set_trace_id(trace_id)
+        started = time.perf_counter()
+        try:
+            response = await call_next(request)
+        except Exception:
+            logger.exception(
+                "http_request_unhandled method=%s path=%s",
+                request.method,
+                request.url.path,
+            )
+            raise
+        else:
+            response.headers["X-Trace-ID"] = trace_id
+            duration_ms = round((time.perf_counter() - started) * 1000)
+            status_level = (
+                logging.ERROR
+                if response.status_code >= 500
+                else logging.WARNING
+                if response.status_code >= 400
+                else logging.INFO
+            )
+            logger.log(
+                status_level,
+                "http_request_completed method=%s path=%s status=%d duration_ms=%d",
+                request.method,
+                request.url.path,
+                response.status_code,
+                duration_ms,
+            )
+            return response
+        finally:
+            reset_trace_id(context_token)
+
     app.include_router(health_router)
     app.include_router(auth_router)
     app.include_router(projects_router)
@@ -49,4 +110,7 @@ def create_app(
     app.include_router(llm_gateway_router)
     app.include_router(llm_models_router)
     app.include_router(llm_provider_admin_router)
+    app.include_router(request_log_router)
+    app.include_router(request_log_admin_router)
+    app.include_router(technical_logging_router)
     return app

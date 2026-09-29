@@ -1,5 +1,6 @@
 """应用依赖容器和 FastAPI 依赖适配器。"""
 
+import asyncio
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import cast
@@ -17,6 +18,7 @@ from app.domain.health import ReadinessProbe
 from app.domain.service_catalog import ServiceCatalogItem
 from app.infrastructure.db.engine import SqlAlchemyReadinessProbe, create_database_engine
 from app.infrastructure.db.models import User
+from app.request_logging.application import GatewayRequestRecorder
 from app.security import JwtService, PasswordService
 from app.service_management.application import ProjectServiceManagement
 from app.services.llm.application import LlmGatewayService
@@ -24,6 +26,8 @@ from app.services.llm.catalog import LLM_SERVICE
 from app.services.llm.configuration import LlmConfigurationService
 from app.services.llm.providers.openai_compatible import ConfiguredLlmProvider
 from app.services.llm.secrets import ProviderSecretCipher
+from app.technical_logging import TechnicalLogService
+from app.usage.application import RequestLogService
 
 
 @dataclass(slots=True)
@@ -47,6 +51,10 @@ class AppContainer:
     service_management: ProjectServiceManagement | None
     llm_gateway_service: LlmGatewayService | None
     llm_configuration_service: LlmConfigurationService | None
+    request_log_service: RequestLogService | None
+    request_recorder: GatewayRequestRecorder | None
+    technical_log_service: TechnicalLogService
+    log_retention_task: asyncio.Task[None] | None
     http_client: httpx.AsyncClient | None
 
     @classmethod
@@ -74,6 +82,10 @@ class AppContainer:
                 service_management=None,
                 llm_gateway_service=None,
                 llm_configuration_service=None,
+                request_log_service=None,
+                request_recorder=None,
+                technical_log_service=TechnicalLogService(settings.log_file_path),
+                log_retention_task=None,
                 http_client=None,
             )
 
@@ -88,6 +100,8 @@ class AppContainer:
             if settings.llm_provider_secret_key is not None
             else None,
         )
+        request_log_service = RequestLogService(session_factory)
+        request_recorder = GatewayRequestRecorder(session_factory)
 
         async def llm_catalog_provider() -> tuple[ServiceCatalogItem, ...]:
             """把当前启用的公开模型名接入通用服务目录。"""
@@ -131,8 +145,13 @@ class AppContainer:
             llm_gateway_service=LlmGatewayService(
                 session_factory,
                 ConfiguredLlmProvider(llm_configuration_service, http_client),
+                request_recorder,
             ),
             llm_configuration_service=llm_configuration_service,
+            request_log_service=request_log_service,
+            request_recorder=request_recorder,
+            technical_log_service=TechnicalLogService(settings.log_file_path),
+            log_retention_task=None,
             http_client=http_client,
         )
 
@@ -140,9 +159,21 @@ class AppContainer:
         """执行启动前管理员状态校验和环境变量引导。"""
         if self.admin_bootstrap is not None:
             await self.admin_bootstrap.ensure()
+        if self.request_log_service is not None:
+            self.log_retention_task = asyncio.create_task(
+                self.request_log_service.run_periodically(),
+                name="gateway-request-log-retention",
+            )
 
     async def close(self) -> None:
         """释放容器拥有的异步资源。"""
+        if self.log_retention_task is not None:
+            self.log_retention_task.cancel()
+            try:
+                await self.log_retention_task
+            except asyncio.CancelledError:
+                pass
+            self.log_retention_task = None
         if self.database_engine is not None:
             await self.database_engine.dispose()
         if self.http_client is not None:
@@ -232,6 +263,37 @@ def get_llm_configuration_service(request: Request) -> LlmConfigurationService:
             },
         )
     return service
+
+
+def get_request_log_service(request: Request) -> RequestLogService:
+    """注入请求日志查询和保留服务单例。"""
+    service = get_container(request).request_log_service
+    if service is None:
+        from fastapi import HTTPException, status
+
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"code": "request_logs_unavailable", "message": "日志服务暂不可用"},
+        )
+    return service
+
+
+def get_request_recorder(request: Request) -> GatewayRequestRecorder:
+    """向所有网关服务注入共享的请求生命周期记录器。"""
+    recorder = get_container(request).request_recorder
+    if recorder is None:
+        from fastapi import HTTPException, status
+
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"code": "request_recorder_unavailable", "message": "日志服务暂不可用"},
+        )
+    return recorder
+
+
+def get_technical_log_service(request: Request) -> TechnicalLogService:
+    """注入管理员只读技术日志查询服务。"""
+    return get_container(request).technical_log_service
 
 
 def get_http_client(request: Request) -> httpx.AsyncClient:

@@ -1,21 +1,29 @@
 """对外提供 OpenAI 风格的 LLM Mock Chat Completions API。"""
 
 import json
+import logging
 import time
 from collections.abc import AsyncIterator
 from typing import Annotated, Any, cast
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.security import HTTPAuthorizationCredentials
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.application.api_keys import ApiKeyInvalidError, ApiKeyService, VerifiedApiKey
-from app.container import bearer_scheme, get_api_key_service, get_llm_gateway_service
+from app.container import (
+    bearer_scheme,
+    get_api_key_service,
+    get_llm_gateway_service,
+    get_request_recorder,
+)
+from app.request_logging.application import GatewayRequestRecorder
 from app.services.llm.application import GatewayCompletion, GatewayRequestError, LlmGatewayService
 from app.services.llm.domain import ChatMessage
 
 router = APIRouter(tags=["LLM Gateway"])
+logger = logging.getLogger("gateway.auth")
 
 
 class ChatMessageRequest(BaseModel):
@@ -130,6 +138,7 @@ async def _invoke(
     payload: ChatCompletionRequest,
     key: VerifiedApiKey,
     service: LlmGatewayService,
+    request_id: str,
 ) -> GatewayCompletion | JSONResponse:
     try:
         return await service.complete(
@@ -151,6 +160,7 @@ async def _invoke(
                     exclude_unset=True,
                 ),
             ),
+            request_id=request_id,
         )
     except GatewayRequestError as error:
         return openai_error(error.status_code, error.code, str(error), error.request_id)
@@ -163,19 +173,54 @@ async def _invoke(
 )
 async def chat_completions(
     payload: ChatCompletionRequest,
+    request: Request,
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer_scheme)],
     key_service: Annotated[ApiKeyService, Depends(get_api_key_service)],
     gateway: Annotated[LlmGatewayService, Depends(get_llm_gateway_service)],
+    request_recorder: Annotated[GatewayRequestRecorder, Depends(get_request_recorder)],
 ) -> JSONResponse | StreamingResponse:
     """通过项目 API Key 自动解析项目并执行额度校验；请求正文不被保存。"""
+    request_id = request.state.trace_id
+    started = time.perf_counter()
     if credentials is None or credentials.scheme.lower() != "bearer":
-        return openai_error(401, "invalid_api_key", "缺少 Bearer API Key")
+        logger.warning(
+            "audit_stage stage=authentication result=denied request_id=%s "
+            "error_code=missing_api_key",
+            request_id,
+        )
+        await request_recorder.record_auth_rejection(
+            request_id=request_id,
+            service_code=LlmGatewayService.service_code,
+            model=payload.model,
+            latency_ms=max(0, round((time.perf_counter() - started) * 1000)),
+            error_code="missing_api_key",
+        )
+        return openai_error(401, "invalid_api_key", "缺少 Bearer API Key", request_id)
     try:
         key = await key_service.verify(credentials.credentials)
     except ApiKeyInvalidError:
-        return openai_error(401, "invalid_api_key", "API Key 无效、已撤销或已过期")
+        logger.warning(
+            "audit_stage stage=authentication result=denied request_id=%s "
+            "error_code=invalid_api_key",
+            request_id,
+        )
+        await request_recorder.record_auth_rejection(
+            request_id=request_id,
+            service_code=LlmGatewayService.service_code,
+            model=payload.model,
+            latency_ms=max(0, round((time.perf_counter() - started) * 1000)),
+            error_code="invalid_api_key",
+        )
+        return openai_error(401, "invalid_api_key", "API Key 无效、已撤销或已过期", request_id)
 
-    result = await _invoke(payload, key, gateway)
+    logger.info(
+        "audit_stage stage=authentication result=allowed request_id=%s project_id=%s api_key_id=%s",
+        request_id,
+        key.project_id,
+        key.id,
+    )
+
+    result = await _invoke(payload, key, gateway, request_id)
     if isinstance(result, JSONResponse):
         return result
     if payload.stream:

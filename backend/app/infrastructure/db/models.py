@@ -6,6 +6,7 @@ from datetime import datetime
 from uuid import UUID, uuid4
 
 from sqlalchemy import (
+    JSON,
     CheckConstraint,
     DateTime,
     ForeignKey,
@@ -246,25 +247,63 @@ class GatewayRequest(Base):
 
     __tablename__ = "gateway_requests"
     __table_args__ = (
+        Index("ix_gateway_requests_created_id", "created_at", "id"),
         Index("ix_gateway_requests_project_created", "project_id", "created_at"),
         Index("ix_gateway_requests_key_created", "api_key_id", "created_at"),
+        Index("ix_gateway_requests_trace_id", "trace_id"),
     )
 
     id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), primary_key=True, default=uuid4)
     request_id: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
-    project_id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), nullable=False)
-    api_key_id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), nullable=False)
+    trace_id: Mapped[str] = mapped_column(
+        String(64), nullable=False, default=lambda: f"trace_{uuid4().hex}"
+    )
+    project_id: Mapped[UUID | None] = mapped_column(PostgreSQLUUID(as_uuid=True))
+    api_key_id: Mapped[UUID | None] = mapped_column(PostgreSQLUUID(as_uuid=True))
     service_code: Mapped[str] = mapped_column(String(50), nullable=False)
     model: Mapped[str] = mapped_column(String(100), nullable=False)
     status: Mapped[str] = mapped_column(String(20), nullable=False)
+    audit_result: Mapped[str] = mapped_column(String(20), nullable=False, server_default="pending")
+    audit_steps: Mapped[dict[str, object]] = mapped_column(
+        JSON, nullable=False, server_default="{}"
+    )
+    result_summary: Mapped[dict[str, object] | None] = mapped_column(JSON)
+    usage_metrics: Mapped[dict[str, object]] = mapped_column(
+        JSON, nullable=False, server_default="{}"
+    )
     prompt_tokens: Mapped[int] = mapped_column(nullable=False, server_default="0")
     completion_tokens: Mapped[int] = mapped_column(nullable=False, server_default="0")
     total_tokens: Mapped[int] = mapped_column(nullable=False, server_default="0")
     latency_ms: Mapped[int] = mapped_column(nullable=False, server_default="0")
     error_code: Mapped[str | None] = mapped_column(String(80))
+    error_message: Mapped[str | None] = mapped_column(String(500))
+    error_details: Mapped[dict[str, object] | None] = mapped_column(JSON)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
+
+
+class LogRetentionRun(Base):
+    """持久记录每次调用日志保留任务的执行结果。"""
+
+    __tablename__ = "log_retention_runs"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('running', 'succeeded', 'failed')",
+            name="ck_log_retention_runs_status",
+        ),
+        Index("ix_log_retention_runs_started_at", "started_at"),
+    )
+
+    id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), primary_key=True, default=uuid4)
+    status: Mapped[str] = mapped_column(String(20), nullable=False)
+    started_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    deleted_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    error_code: Mapped[str | None] = mapped_column(String(80))
 
 
 class LlmProviderConfig(Base):

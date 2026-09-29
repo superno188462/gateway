@@ -8,6 +8,23 @@ class ProviderParameterError(RuntimeError):
     """上游拒绝某项调用参数，常见原因是模型不支持该字段或取值。"""
 
 
+class ProviderCallError(ProviderParameterError):
+    """上游连接池调用失败，携带可供排障的脱敏诊断信息。"""
+
+    def __init__(
+        self,
+        code: str,
+        message: str,
+        diagnostics: dict[str, object],
+        *,
+        parameter_error: bool = False,
+    ) -> None:
+        super().__init__(message)
+        self.code = code
+        self.diagnostics = diagnostics
+        self.parameter_error = parameter_error
+
+
 @dataclass(frozen=True, slots=True)
 class ChatMessage:
     """一次聊天消息及供应商定义的标准扩展字段。"""

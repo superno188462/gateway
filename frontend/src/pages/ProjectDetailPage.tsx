@@ -298,6 +298,12 @@ export function ProjectDetailPage() {
               <span>owner 可创建和撤销；editor 可查看密钥信息。</span>
             </div>
           )}
+          <div className="project-detail-shortcuts">
+            <Link className="secondary-button project-key-link" to={`/projects/${project.id}/logs`}>
+              查看调用日志 <span aria-hidden="true">→</span>
+            </Link>
+            <span>仅包含该项目的调用状态、用量和错误分类。</span>
+          </div>
           {canManage && (
             <section className="project-detail-panel service-allocation-panel" aria-labelledby="project-service-title">
               <div className="service-allocation-heading">

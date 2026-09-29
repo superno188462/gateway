@@ -8,6 +8,7 @@ __pycache__/
 htmlcov/
 *.py[cod]
 backend/.venv/
+backend/logs/
 frontend/node_modules/
 frontend/dist/
 .tmp/

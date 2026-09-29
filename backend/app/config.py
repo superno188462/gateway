@@ -1,6 +1,7 @@
 """类型化应用配置及启动前校验。"""
 
 from enum import StrEnum
+from pathlib import Path
 
 from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -27,6 +28,8 @@ class Settings(BaseSettings):
     app_env: AppEnvironment = AppEnvironment.DEVELOPMENT
     database_url: str = Field(description="SQLAlchemy 异步 PostgreSQL 连接串。")
     log_level: str = "INFO"
+    log_file_path: Path = Path("logs/gateway.log")
+    log_backup_count: int = Field(default=30, ge=1, le=365)
     admin_username: str | None = None
     admin_password: str | None = None
     jwt_secret_key: str = Field(min_length=32)

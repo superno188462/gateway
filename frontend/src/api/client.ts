@@ -46,7 +46,7 @@ export type ProjectPage = {
 export type ProjectMemberRole = "owner" | "editor" | "viewer";
 
 export type ProjectMember = {
-  project_id: string;
+  project_id: string | null;
   user_id: string;
   username: string;
   role: ProjectMemberRole;
@@ -58,7 +58,7 @@ export type ApiKeyStatus = "active" | "revoked" | "expired";
 
 export type ApiKey = {
   id: string;
-  project_id: string;
+  project_id: string | null;
   name: string;
   key_prefix: string;
   key_last_four: string;
@@ -72,7 +72,7 @@ export type ApiKey = {
 
 /** 项目当前已开通的服务额度及 UTC 月度用量。 */
 export type ProjectService = {
-  project_id: string;
+  project_id: string | null;
   service_code: string;
   monthly_token_limit: number;
   status: "active" | "suspended";
@@ -115,6 +115,77 @@ export type LlmProviderTestResult = {
   success: boolean;
   message: string;
   tested_at: string;
+};
+
+/** 一条不含密钥、提示词和回复正文的网关调用日志。 */
+export type RequestLog = {
+  request_id: string;
+  trace_id: string;
+  project_id: string | null;
+  project_name: string | null;
+  service_code: string;
+  model: string;
+  status: "received" | "succeeded" | "failed" | "denied";
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+  latency_ms: number;
+  error_code: string | null;
+  error_message: string | null;
+  created_at: string;
+};
+
+/** 调用记录的数据库页结果及筛选命中总量。 */
+export type RequestLogPage = {
+  items: RequestLog[];
+  next_cursor: string | null;
+  page: number;
+  page_size: number;
+  total_count: number;
+  total_pages: number;
+};
+
+export type TechnicalLogEntry = {
+  timestamp: string;
+  level: "DEBUG" | "INFO" | "WARNING" | "ERROR" | "CRITICAL";
+  source: string;
+  trace_id: string;
+  message: string;
+};
+
+export type TechnicalLogPage = {
+  entries: TechnicalLogEntry[];
+  log_file: string;
+  page: number;
+  page_size: number;
+  total_count: number;
+  total_pages: number;
+};
+
+/** 从请求日志实时聚合的 Dashboard 指标。 */
+export type RequestUsageSummary = {
+  start_at: string;
+  end_at: string;
+  request_count: number;
+  succeeded_count: number;
+  failed_count: number;
+  denied_count: number;
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+  average_latency_ms: number;
+  cost_cny: null;
+  by_model: Array<{ model: string; request_count: number; total_tokens: number }>;
+  by_day: Array<{ day: string; request_count: number; total_tokens: number }>;
+};
+
+export type LogRetentionRun = {
+  id: string;
+  status: "running" | "succeeded" | "failed";
+  started_at: string;
+  finished_at: string | null;
+  deleted_count: number;
+  error_code: string | null;
 };
 
 /** 用户可见的启用模型路由组；不包含上游连接详情。 */
@@ -172,6 +243,95 @@ async function request<T>(
 export const apiClient = {
   getLiveness: () => request<HealthResponse>("/health/live"),
   getReadiness: () => request<HealthResponse>("/health/ready"),
+  getRequestUsageSummary: (
+    token: string,
+    filters: { startAt?: string; endAt?: string; projectId?: string } = {},
+  ) => {
+    const params = new URLSearchParams();
+    if (filters.startAt) params.set("start_at", filters.startAt);
+    if (filters.endAt) params.set("end_at", filters.endAt);
+    if (filters.projectId) params.set("project_id", filters.projectId);
+    const suffix = params.size ? `?${params.toString()}` : "";
+    return request<RequestUsageSummary>(`/v1/usage/summary${suffix}`, {}, token);
+  },
+  getProjectRequestLogs: (
+    token: string,
+    projectId: string,
+    filters: {
+      startAt?: string;
+      endAt?: string;
+      status?: RequestLog["status"];
+      model?: string;
+      serviceCode?: string;
+      requestId?: string;
+      page?: number;
+      pageSize?: number;
+    } = {},
+  ) => {
+    const params = new URLSearchParams();
+    if (filters.startAt) params.set("start_at", filters.startAt);
+    if (filters.endAt) params.set("end_at", filters.endAt);
+    if (filters.status) params.set("status", filters.status);
+    if (filters.model) params.set("model", filters.model);
+    if (filters.serviceCode) params.set("service_code", filters.serviceCode);
+    if (filters.requestId) params.set("request_id", filters.requestId);
+    if (filters.page !== undefined) params.set("page", String(filters.page));
+    if (filters.pageSize !== undefined) params.set("page_size", String(filters.pageSize));
+    const suffix = params.size ? `?${params.toString()}` : "";
+    return request<RequestLogPage>(`/v1/projects/${encodeURIComponent(projectId)}/requests${suffix}`, {}, token);
+  },
+  getAdminRequestLogs: (
+    token: string,
+    filters: {
+      startAt?: string;
+      endAt?: string;
+      projectId?: string;
+      status?: RequestLog["status"];
+      model?: string;
+      serviceCode?: string;
+      requestId?: string;
+      page?: number;
+      pageSize?: number;
+    } = {},
+  ) => {
+    const params = new URLSearchParams();
+    if (filters.startAt) params.set("start_at", filters.startAt);
+    if (filters.endAt) params.set("end_at", filters.endAt);
+    if (filters.projectId) params.set("project_id", filters.projectId);
+    if (filters.status) params.set("status", filters.status);
+    if (filters.model) params.set("model", filters.model);
+    if (filters.serviceCode) params.set("service_code", filters.serviceCode);
+    if (filters.requestId) params.set("request_id", filters.requestId);
+    if (filters.page !== undefined) params.set("page", String(filters.page));
+    if (filters.pageSize !== undefined) params.set("page_size", String(filters.pageSize));
+    const suffix = params.size ? `?${params.toString()}` : "";
+    return request<RequestLogPage>(`/admin/v1/requests${suffix}`, {}, token);
+  },
+  getProjectRequestLog: (token: string, projectId: string, requestId: string) =>
+    request<RequestLog>(
+      `/v1/projects/${encodeURIComponent(projectId)}/requests/${encodeURIComponent(requestId)}`,
+      {},
+      token,
+    ),
+  getAdminRequestLog: (token: string, requestId: string) =>
+    request<RequestLog>(`/admin/v1/requests/logs/${encodeURIComponent(requestId)}`, {}, token),
+  getLogRetentionRun: (token: string) =>
+    request<LogRetentionRun | null>("/admin/v1/requests/retention", {}, token),
+  runLogRetention: (token: string) =>
+    request<LogRetentionRun>("/admin/v1/requests/retention/run", { method: "POST" }, token),
+  getTechnicalLogs: (
+    token: string,
+    filters: { level?: TechnicalLogEntry["level"]; traceId?: string; query?: string; page?: number; pageSize?: number } = {},
+  ) => {
+    const params = new URLSearchParams();
+    if (filters.level) params.set("level", filters.level);
+    if (filters.traceId) params.set("trace_id", filters.traceId);
+    if (filters.query) params.set("query", filters.query);
+    if (filters.page !== undefined) params.set("page", String(filters.page));
+    if (filters.pageSize !== undefined) params.set("page_size", String(filters.pageSize));
+    const suffix = params.size ? `?${params.toString()}` : "";
+    return request<TechnicalLogPage>(`/admin/v1/system-logs${suffix}`, {}, token);
+  },
   login: (payload: LoginRequest) =>
     request<TokenResponse>("/v1/auth/login", {
       method: "POST",

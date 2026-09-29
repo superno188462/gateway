@@ -16,7 +16,7 @@
 $env:DATABASE_URL = "postgresql+asyncpg://数据库用户:数据库密码@119.45.48.180:5432/数据库名"
 ```
 
-当前后端读取的应用配置包括 `DATABASE_URL`、`APP_ENV`、`LOG_LEVEL`、`JWT_SECRET_KEY`、`JWT_ACCESS_TOKEN_EXPIRE_MINUTES`、`DEFAULT_LLM_MONTHLY_TOKEN_LIMIT` 和 A3 的 `API_KEY_SECRET_KEY`。管理员引导可同时配置 `ADMIN_USERNAME`、`ADMIN_PASSWORD`；两项都缺省时必须已经存在数据库管理员。`POSTGRES_USER`、`POSTGRES_PASSWORD` 等属于数据库容器配置，不属于应用配置，因此不放在应用 `.env.example` 中。
+当前后端读取的应用配置包括 `DATABASE_URL`、`APP_ENV`、`LOG_LEVEL`、`LOG_FILE_PATH`、`LOG_BACKUP_COUNT`、`JWT_SECRET_KEY`、`JWT_ACCESS_TOKEN_EXPIRE_MINUTES`、`DEFAULT_LLM_MONTHLY_TOKEN_LIMIT` 和 A3 的 `API_KEY_SECRET_KEY`。日志默认写入 `backend/logs/gateway.log`，每天轮转并保留 30 个归档文件；管理员可在控制台的“技术日志”页面查看、按等级/Trace ID/事件筛选。管理员引导可同时配置 `ADMIN_USERNAME`、`ADMIN_PASSWORD`；两项都缺省时必须已经存在数据库管理员。`POSTGRES_USER`、`POSTGRES_PASSWORD` 等属于数据库容器配置，不属于应用配置，因此不放在应用 `.env.example` 中。
 
 本轮 B0 已使用隔离的本地 PostgreSQL 临时实例完成验证，但不会作为项目运行时数据库。`compose.yaml` 当前只包含 PostgreSQL 服务骨架；完整的前后端服务器 Docker 部署脚本将在 A7 阶段补齐后才可用于生产部署。
 

@@ -81,8 +81,8 @@ export function HealthPage() {
       <div className="verification-note">
         <span className="note-icon" aria-hidden="true">i</span>
         <div>
-          <strong>F0 验收范围</strong>
-          <p>当前只验证前端基础工程和 B0 健康接口，业务模块将在后续阶段逐步开放。</p>
+            <strong>运行状态说明</strong>
+            <p>进程存活检查确认后端仍可响应；数据库就绪检查会实际执行 PostgreSQL 查询。</p>
           {lastChecked && <small>最近检查：{lastChecked.toLocaleTimeString()}</small>}
         </div>
       </div>

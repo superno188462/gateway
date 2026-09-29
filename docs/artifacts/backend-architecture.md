@@ -56,6 +56,7 @@ B0 不创建业务实体。数据库只产生 Alembic 自己的 `alembic_version
 - `DATABASE_URL` 必须是 `postgresql+asyncpg://` 连接串。
 - `APP_ENV` 取值为 `development`、`test` 或 `production`。
 - `LOG_LEVEL` 取标准日志级别。
+- `LOG_FILE_PATH` 指定 UTF-8 技术日志路径，默认为 `logs/gateway.log`；`LOG_BACKUP_COUNT` 默认保留 30 个按日轮转的归档文件。技术日志只允许管理员通过系统日志接口读取。
 - `API_KEY_SECRET_KEY` 至少 32 个字符，用于派生 API Key 摘要和加密密钥。未配置时应用可启动，但 Key 管理和验证返回 503；该值必须稳定保存，轮换会使已有 Key 无法解密和验证。
 - 配置对象由 `AppContainer.settings` 注册为单例；业务代码通过依赖注入取得，不直接调用 `Settings()`。
 - 数据库引擎和基础设施服务由 `AppContainer` 注册为单例，并在应用关闭时统一释放。

@@ -30,7 +30,9 @@ def database_url() -> str:
     return os.getenv("TEST_DATABASE_URL") or Settings().database_url
 
 
-async def test_llm_mock_access_chat_stream_quota_and_upgrade() -> None:
+async def test_llm_mock_access_chat_stream_quota_and_upgrade(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     engine = create_async_engine(database_url())
     factory = async_sessionmaker(engine, expire_on_commit=False)
     owner_id, project_id, second_project_id = uuid4(), uuid4(), uuid4()
@@ -41,6 +43,8 @@ async def test_llm_mock_access_chat_stream_quota_and_upgrade() -> None:
     app = None
     default_user_id: UUID | None = None
     admin_session_jti = None
+    invalid_request_id: str | None = None
+    invalid_route_request_id: str | None = None
     try:
         async with factory.begin() as session:
             session.add(owner)
@@ -202,6 +206,19 @@ async def test_llm_mock_access_chat_stream_quota_and_upgrade() -> None:
             )
             assert applied.status_code == 201
             assert applied.json()["monthly_token_limit"] == 100_000
+            invalid_route = await client.post(
+                "/v1/chat/completions",
+                headers=api_headers,
+                json={**body, "model": f"missing-{suffix}/no-such-model"},
+            )
+            assert invalid_route.status_code == 404
+            invalid_route_request_id = invalid_route.headers["x-request-id"]
+            assert invalid_route.headers["x-trace-id"] == invalid_route_request_id
+            assert any(
+                f"request_id={invalid_route_request_id}" in record.getMessage()
+                and "stage=routing result=failed" in record.getMessage()
+                for record in caplog.records
+            )
             second_applied = await client.post(
                 f"/api/admin/v1/projects/{second_project_id}/services",
                 headers=jwt_headers,
@@ -270,6 +287,8 @@ async def test_llm_mock_access_chat_stream_quota_and_upgrade() -> None:
             assert result["choices"][0]["message"]["content"].startswith("[Mock LLM]")
             assert result["usage"]["total_tokens"] > 0
             assert response.headers["x-request-id"] == result["id"]
+            assert response.headers["x-trace-id"] == response.headers["x-request-id"]
+            successful_request_id = response.headers["x-request-id"]
 
             streaming = await client.post(
                 "/v1/chat/completions",
@@ -293,6 +312,12 @@ async def test_llm_mock_access_chat_stream_quota_and_upgrade() -> None:
             over_quota = await client.post("/v1/chat/completions", headers=api_headers, json=body)
             assert over_quota.status_code == 429
             assert over_quota.json()["error"]["code"] == "project_quota_exceeded"
+            assert any(
+                "stage=quota result=denied" in record.getMessage()
+                and '"decision": "project_quota_exceeded"' in record.getMessage()
+                and '"project_monthly_limit": 100000' in record.getMessage()
+                for record in caplog.records
+            )
 
             upgraded = await client.patch(
                 f"/api/admin/v1/projects/{project_id}/services/mock-llm-v1",
@@ -312,6 +337,7 @@ async def test_llm_mock_access_chat_stream_quota_and_upgrade() -> None:
                 json=body,
             )
             assert invalid.status_code == 401
+            invalid_request_id = invalid.headers["x-request-id"]
 
             service_list = await client.get(
                 f"/api/admin/v1/projects/{project_id}/services", headers=jwt_headers
@@ -329,9 +355,135 @@ async def test_llm_mock_access_chat_stream_quota_and_upgrade() -> None:
             assert any(log.error_code == "service_not_enabled" for log in logs)
             assert any(log.error_code == "project_quota_exceeded" for log in logs)
             assert all(log.api_key_id == created.info.id for log in logs)
+            successful_log = next(log for log in logs if log.request_id == successful_request_id)
+            denied_log = next(log for log in logs if log.error_code == "service_not_enabled")
+            assert denied_log.audit_result == "denied"
+            assert denied_log.error_message == "项目尚未申请 LLM Mock 服务"
+            assert denied_log.audit_steps["quota"] == {
+                "result": "denied",
+                "error_code": "service_not_enabled",
+            }
+            assert denied_log.status == "denied"
+            assert successful_log.trace_id == successful_request_id
+            assert successful_log.audit_result == "allowed"
+            assert successful_log.audit_steps == {
+                "authentication": {"result": "allowed"},
+                "quota": {"result": "allowed"},
+                "routing": {"result": "allowed"},
+                "service_call": {"result": "succeeded"},
+            }
+            assert successful_log.result_summary == {
+                "response_type": "chat.completion",
+                "finish_reason": "stop",
+            }
+            assert successful_log.usage_metrics["unit"] == "tokens"
+            assert successful_log.status == "succeeded"
             assert not {"prompt", "messages", "response", "content"} & set(
                 GatewayRequest.__table__.columns.keys()
             )
+            invalid_log = await session.scalar(
+                select(GatewayRequest).where(GatewayRequest.request_id == invalid_request_id)
+            )
+            assert invalid_log is not None
+            assert invalid_log.project_id is None
+            assert invalid_log.api_key_id is None
+            assert invalid_log.audit_steps["authentication"] == {
+                "result": "denied",
+                "error_code": "invalid_api_key",
+            }
+            routing_log = await session.scalar(
+                select(GatewayRequest).where(GatewayRequest.request_id == invalid_route_request_id)
+            )
+            assert routing_log is not None
+            authentication_stage = routing_log.audit_steps["authentication"]
+            routing_stage = routing_log.audit_steps["routing"]
+            assert isinstance(authentication_stage, dict)
+            assert authentication_stage.get("result") == "allowed"
+            assert isinstance(routing_stage, dict)
+            assert routing_stage.get("error_code") == "model_not_found"
+            assert "quota" not in routing_log.audit_steps
+            assert "service_call" not in routing_log.audit_steps
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            project_logs = await client.get(
+                f"/api/v1/projects/{project_id}/requests", headers=jwt_headers
+            )
+            assert project_logs.status_code == 200
+            assert project_logs.json()["page"] == 1
+            assert project_logs.json()["page_size"] == 50
+            assert project_logs.json()["total_count"] >= 2
+            assert project_logs.json()["total_pages"] >= 1
+            assert successful_request_id in {
+                item["request_id"] for item in project_logs.json()["items"]
+            }
+            first_numbered_page = await client.get(
+                f"/api/v1/projects/{project_id}/requests",
+                headers=jwt_headers,
+                params={"page": 1, "page_size": 1},
+            )
+            second_numbered_page = await client.get(
+                f"/api/v1/projects/{project_id}/requests",
+                headers=jwt_headers,
+                params={"page": 2, "page_size": 1},
+            )
+            assert first_numbered_page.status_code == second_numbered_page.status_code == 200
+            assert (
+                first_numbered_page.json()["items"][0]["request_id"]
+                != (second_numbered_page.json()["items"][0]["request_id"])
+            )
+            assert second_numbered_page.json()["page"] == 2
+            successful_detail = await client.get(
+                f"/api/v1/projects/{project_id}/requests/{successful_request_id}",
+                headers=jwt_headers,
+            )
+            assert successful_detail.status_code == 200
+            assert successful_detail.json()["trace_id"] == successful_request_id
+            assert not {
+                "audit_result",
+                "audit_steps",
+                "error_details",
+                "result_summary",
+                "usage_metrics",
+            } & set(successful_detail.json())
+            route_detail = await client.get(
+                f"/api/v1/projects/{project_id}/requests/{invalid_route_request_id}",
+                headers=jwt_headers,
+            )
+            assert route_detail.status_code == 200
+            assert route_detail.json()["error_code"] == "model_not_found"
+            assert route_detail.json()["error_message"] == (
+                "请求的模型不存在，或当前没有可用的上游路由"
+            )
+            assert not {
+                "audit_result",
+                "audit_steps",
+                "error_details",
+                "result_summary",
+                "usage_metrics",
+            } & set(route_detail.json())
+            forbidden_global_logs = await client.get("/api/admin/v1/requests", headers=jwt_headers)
+            assert forbidden_global_logs.status_code == 403
+            forbidden_system_logs = await client.get(
+                "/api/admin/v1/system-logs", headers=jwt_headers
+            )
+            assert forbidden_system_logs.status_code == 403
+            if admin_token is not None:
+                system_logs = await client.get("/api/admin/v1/system-logs", headers=admin_headers)
+                assert system_logs.status_code == 200
+                assert "entries" in system_logs.json()
+                all_logs = await client.get("/api/admin/v1/requests", headers=admin_headers)
+                assert all_logs.status_code == 200
+                assert invalid_request_id in {
+                    item["request_id"] for item in all_logs.json()["items"]
+                }
+                global_logs = await client.get(
+                    "/api/admin/v1/requests",
+                    headers=admin_headers,
+                    params={"project_id": str(project_id)},
+                )
+                assert global_logs.status_code == 200
+                assert all(
+                    item["project_id"] == str(project_id) for item in global_logs.json()["items"]
+                )
     finally:
         if app is not None:
             await app.state.container.close()
@@ -342,6 +494,10 @@ async def test_llm_mock_access_chat_stream_quota_and_upgrade() -> None:
             await session.execute(
                 delete(GatewayRequest).where(GatewayRequest.project_id == second_project_id)
             )
+            if invalid_request_id is not None:
+                await session.execute(
+                    delete(GatewayRequest).where(GatewayRequest.request_id == invalid_request_id)
+                )
             if admin_session_jti is not None:
                 await session.execute(
                     delete(AuthSession).where(AuthSession.jti == admin_session_jti)
