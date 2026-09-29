@@ -43,7 +43,11 @@ class ChatCompletionRequest(BaseModel):
 
     model_config = ConfigDict(extra="allow")
 
-    model: str = Field(description="服务模型标识，例如 mock-chat。")
+    model: str = Field(
+        min_length=1,
+        max_length=200,
+        description="模型标识；供应商连接原样接收此名称，必须填写供应商支持的模型名。",
+    )
     messages: list[ChatMessageRequest] = Field(min_length=1, max_length=100)
     max_tokens: int | None = Field(
         default=None, ge=1, le=4096, description="兼容旧参数并用于额度预留。"

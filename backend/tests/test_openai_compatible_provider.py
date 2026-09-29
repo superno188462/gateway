@@ -11,18 +11,19 @@ from app.services.llm.providers.openai_compatible import ConfiguredLlmProvider
 
 
 class FakeConfiguration:
-    """固定返回一组公开模型的测试上游连接。"""
+    """固定返回优先级调用池的测试上游连接。"""
 
-    async def active_model_codes(self) -> tuple[str, ...]:
-        return ("public-chat",)
+    async def has_active_providers(self) -> bool:
+        return True
+
+    async def supports_model(self, model: str) -> bool:
+        return bool(model)
 
     async def resolve_model_pool(self, model_code: str) -> tuple[ResolvedLlmModel, ...]:
-        if model_code != "public-chat":
-            return ()
         return (
             ResolvedLlmModel(
                 model_code=model_code,
-                upstream_model="vendor-chat-v2",
+                upstream_model=model_code,
                 base_url="https://llm.example.test/v1",
                 api_key="upstream-secret",
             ),
@@ -30,7 +31,7 @@ class FakeConfiguration:
 
 
 @pytest.mark.asyncio
-async def test_openai_compatible_provider_maps_model_and_normalizes_usage() -> None:
+async def test_openai_compatible_provider_forwards_model_and_normalizes_usage() -> None:
     seen: dict[str, object] = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -48,17 +49,50 @@ async def test_openai_compatible_provider_maps_model_and_normalizes_usage() -> N
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         provider = ConfiguredLlmProvider(FakeConfiguration(), client)  # type: ignore[arg-type]
         assert await provider.supports("public-chat")
+        assert await provider.supports("any-vendor-model-name")
         result = await provider.complete("public-chat", [ChatMessage("user", "hi")], 30)
 
     assert seen["url"] == "https://llm.example.test/v1/chat/completions"
     assert seen["authorization"] == "Bearer upstream-secret"
-    assert json.loads(str(seen["payload"]))["model"] == "vendor-chat-v2"
+    assert json.loads(str(seen["payload"]))["model"] == "public-chat"
     assert result.content == "hello"
     assert result.prompt_tokens == 3
     assert result.completion_tokens == 2
     assert result.finish_reason == "stop"
     assert result.raw_response is not None
     assert result.raw_response["usage"] == {"prompt_tokens": 3, "completion_tokens": 2}
+
+
+@pytest.mark.asyncio
+async def test_provider_uses_resolved_model_after_prefix_route_selection() -> None:
+    seen: dict[str, object] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["model"] = json.loads(request.read())["model"]
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}]},
+        )
+
+    class PrefixConfiguration(FakeConfiguration):
+        async def resolve_model_pool(self, model_code: str) -> tuple[ResolvedLlmModel, ...]:
+            prefix, separator, upstream_model = model_code.partition("/")
+            if prefix != "volc" or not separator:
+                return ()
+            return (
+                ResolvedLlmModel(
+                    model_code=model_code,
+                    upstream_model=upstream_model,
+                    base_url="https://volc.example.test/v1",
+                    api_key="volc-key",
+                ),
+            )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        provider = ConfiguredLlmProvider(PrefixConfiguration(), client)  # type: ignore[arg-type]
+        await provider.complete("volc/doubao-seed", [ChatMessage("user", "hi")], 8)
+
+    assert seen["model"] == "doubao-seed"
 
 
 @pytest.mark.asyncio
@@ -134,7 +168,7 @@ async def test_provider_reports_unsupported_parameter_status() -> None:
 
 
 @pytest.mark.asyncio
-async def test_provider_pool_fails_over_and_rotates_starting_connection() -> None:
+async def test_provider_pool_tries_connections_in_priority_order_on_each_request() -> None:
     requests: list[str] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -152,13 +186,13 @@ async def test_provider_pool_fails_over_and_rotates_starting_connection() -> Non
             return (
                 ResolvedLlmModel(
                     model_code=model_code,
-                    upstream_model="first-model",
+                    upstream_model=model_code,
                     base_url="https://first.example.test/v1",
                     api_key="first-key",
                 ),
                 ResolvedLlmModel(
                     model_code=model_code,
-                    upstream_model="second-model",
+                    upstream_model=model_code,
                     base_url="https://second.example.test/v1",
                     api_key="second-key",
                 ),
@@ -169,7 +203,12 @@ async def test_provider_pool_fails_over_and_rotates_starting_connection() -> Non
         await provider.complete("public-chat", [ChatMessage("user", "hi")], 30)
         await provider.complete("public-chat", [ChatMessage("user", "hi")], 30)
 
-    assert requests == ["first.example.test", "second.example.test", "second.example.test"]
+    assert requests == [
+        "first.example.test",
+        "second.example.test",
+        "first.example.test",
+        "second.example.test",
+    ]
 
 
 @pytest.mark.asyncio

@@ -25,15 +25,14 @@ class ConfiguredLlmProvider(LlmProvider):
         self._configuration = configuration
         self._http_client = http_client
         self._mock = MockLlmProvider()
-        self._next_index: dict[str, int] = {}
 
     async def supports(self, model: str) -> bool:
-        """确认模型是内置 Mock 或启用的供应商模型。"""
+        """确认模型是内置 Mock，或存在可尝试的启用上游连接。"""
         if model == "mock-chat":
             return True
         if self._configuration is None:
             return False
-        return model in await self._configuration.active_model_codes()
+        return bool(model.strip()) and await self._configuration.supports_model(model)
 
     async def complete(
         self,
@@ -50,19 +49,15 @@ class ConfiguredLlmProvider(LlmProvider):
         routes = await self._configuration.resolve_model_pool(model)
         if not routes:
             raise RuntimeError("模型配置已停用或不存在")
-        start = self._next_index.get(model, 0) % len(routes)
-        self._next_index[model] = start + 1
-        candidates = [
-            routes[(start + offset) % len(routes)] for offset in range(min(3, len(routes)))
-        ]
         last_error: Exception | None = None
-        for resolved in candidates:
+        for resolved in routes:
             try:
                 return await self._complete_with_route(
                     resolved, messages, max_tokens, parameters or {}
                 )
             except httpx.HTTPStatusError as error:
-                if error.response.status_code < 500 and error.response.status_code not in {
+                status_code = error.response.status_code
+                retryable_status = status_code >= 500 or status_code in {
                     400,
                     401,
                     403,
@@ -71,7 +66,8 @@ class ConfiguredLlmProvider(LlmProvider):
                     409,
                     429,
                     422,
-                }:
+                }
+                if not retryable_status:
                     raise
                 last_error = error
             except httpx.RequestError as error:

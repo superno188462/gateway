@@ -83,10 +83,13 @@ async def test_provider_admin_http_endpoints_and_permissions() -> None:
         )
 
     created_provider_ids: list[UUID] = []
+    test_prefix = f"test-volc-{secrets.token_hex(4)}"
+    first_name = f"api-test-a-{secrets.token_hex(5)}"
     try:
         admin_headers = {"Authorization": f"Bearer {admin_token}"}
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             assert (await client.get("/api/admin/v1/llm/providers")).status_code == 401
+            assert (await client.get("/api/v1/llm/provider-catalog")).status_code == 401
             forbidden = await client.get(
                 "/api/admin/v1/llm/providers",
                 headers={"Authorization": f"Bearer {user_token}"},
@@ -97,38 +100,50 @@ async def test_provider_admin_http_endpoints_and_permissions() -> None:
                 "/api/admin/v1/llm/providers",
                 headers=admin_headers,
                 json={
-                    "name": f"api-test-a-{secrets.token_hex(5)}",
+                    "name": first_name,
+                    "route_prefix": test_prefix,
                     "base_url": "https://provider-a.example.test/v1",
                     "api_key": "secret-provider-a",
                 },
             )
             assert first.status_code == 201
             assert first.json()["api_key_configured"] is True
+            assert first.json()["route_prefix"] == test_prefix
             assert "secret-provider-a" not in first.text
             assert "api_key" not in first.json()
             first_id = UUID(first.json()["id"])
             created_provider_ids.append(first_id)
 
-            public_model = f"pool-api-test-{secrets.token_hex(5)}"
-            first_model = await client.post(
-                f"/api/admin/v1/llm/providers/{first_id}/models",
-                headers=admin_headers,
-                json={"model_code": public_model, "upstream_model": "vendor-model-a"},
+            catalog = await client.get(
+                "/api/v1/llm/provider-catalog",
+                headers={"Authorization": f"Bearer {user_token}"},
             )
-            assert first_model.status_code == 201
+            assert catalog.status_code == 200
+            prefix_group = next(
+                group for group in catalog.json()["groups"] if group["prefix"] == test_prefix
+            )
+            assert prefix_group["connection_count"] == 1
+            assert prefix_group["providers"] == [first_name]
+            assert "base_url" not in catalog.text
+            assert "priority" not in catalog.text
+            assert "api-test-a" in catalog.text
+            assert "secret-provider-a" not in catalog.text
 
             tested = await client.post(
-                f"/api/admin/v1/llm/providers/{first_id}/test", headers=admin_headers
+                f"/api/admin/v1/llm/providers/{first_id}/test",
+                headers=admin_headers,
+                json={"model": "vendor-model-a"},
             )
             assert tested.status_code == 200
             assert tested.json()["success"] is True
             assert tested.json()["message"] == "连接成功"
 
+            second_name = f"api-test-b-{secrets.token_hex(5)}"
             second = await client.post(
                 "/api/admin/v1/llm/providers",
                 headers=admin_headers,
                 json={
-                    "name": f"api-test-b-{secrets.token_hex(5)}",
+                    "name": second_name,
                     "base_url": "https://provider-b.example.test/v1",
                     "api_key": "secret-provider-b",
                 },
@@ -136,20 +151,27 @@ async def test_provider_admin_http_endpoints_and_permissions() -> None:
             assert second.status_code == 201
             second_id = UUID(second.json()["id"])
             created_provider_ids.append(second_id)
-            second_model = await client.post(
-                f"/api/admin/v1/llm/providers/{second_id}/models",
+            catalog = await client.get("/api/v1/llm/provider-catalog", headers=admin_headers)
+            assert catalog.status_code == 200
+            groups = {group["prefix"]: group for group in catalog.json()["groups"]}
+            assert groups[test_prefix]["connection_count"] == 1
+            assert second_name in groups[None]["providers"]
+            prioritized = await client.patch(
+                f"/api/admin/v1/llm/providers/{second_id}",
                 headers=admin_headers,
-                json={"model_code": public_model, "upstream_model": "vendor-model-b"},
+                json={"priority": 1},
             )
-            assert second_model.status_code == 201
+            assert prioritized.status_code == 200
+            assert prioritized.json()["priority"] == 1
             models = await client.get("/api/v1/llm/models")
             assert models.status_code == 200
-            assert models.json().count(public_model) == 1
+            assert models.json() == ["mock-chat"]
 
             providers = await client.get("/api/admin/v1/llm/providers", headers=admin_headers)
             assert providers.status_code == 200
             first_info = next(item for item in providers.json() if item["id"] == str(first_id))
             assert first_info["last_test_success"] is True
+            assert first_info["priority"] == 100
             assert "secret-provider-a" not in providers.text
             assert requests == ["/v1/chat/completions"]
     finally:

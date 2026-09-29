@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { ApiClientError, apiClient, type UserServiceQuota } from "../api/client";
+import { ApiClientError, apiClient, type LlmProviderCatalog, type UserServiceQuota } from "../api/client";
 import { useAuth } from "../auth/useAuth";
 
 type QuotaLookupMode = "username" | "user_id";
@@ -16,6 +16,7 @@ function errorMessage(reason: unknown): string {
 export function MyServicesPage() {
   const { token, user } = useAuth();
   const [services, setServices] = useState<UserServiceQuota[]>([]);
+  const [providerCatalog, setProviderCatalog] = useState<LlmProviderCatalog | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [lookupMode, setLookupMode] = useState<QuotaLookupMode>("username");
@@ -33,7 +34,13 @@ export function MyServicesPage() {
     setIsLoading(true);
     setError(null);
     try {
-      setServices(await apiClient.getMyServices(token));
+      const [quotaResult, catalogResult] = await Promise.allSettled([
+        apiClient.getMyServices(token),
+        apiClient.getLlmProviderCatalog(token),
+      ]);
+      if (quotaResult.status === "rejected") throw quotaResult.reason;
+      setServices(quotaResult.value);
+      setProviderCatalog(catalogResult.status === "fulfilled" ? catalogResult.value : null);
     } catch (reason) {
       setError(errorMessage(reason));
     } finally {
@@ -126,6 +133,34 @@ export function MyServicesPage() {
         </div>
       )}
 
+      {providerCatalog && (
+        <section className="project-detail-panel service-provider-catalog" aria-labelledby="llm-route-catalog-title">
+          <div>
+            <p className="page-kicker">LLM 调用</p>
+            <h3 id="llm-route-catalog-title">可用供应商路由</h3>
+            <p>在 OpenAI 兼容请求的 model 字段中填写模型名；指定前缀时使用“前缀/模型名”，不带前缀则使用默认池。</p>
+          </div>
+          {providerCatalog.groups.length === 0 ? (
+            <p className="service-quota-note">当前没有启用的上游连接。</p>
+          ) : (
+            <div className="service-route-catalog">
+              {providerCatalog.groups.map((group) => (
+                <div className="service-route-item" key={group.prefix ?? "default"}>
+                  <code>{group.prefix ?? "默认池"}</code>
+                  {group.providers?.length ? (
+                    <span>供应商：{group.providers.join("、")}</span>
+                  ) : (
+                    <span>供应商名称暂不可用，请重启后端服务后刷新。</span>
+                  )}
+                  {group.prefix && <span>模型格式：{group.prefix}/模型名</span>}
+                  <small>{group.connection_count} 个可用连接</small>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+      )}
+
       {isLoading ? (
         <div className="empty-state service-page-state" aria-live="polite">正在加载服务额度…</div>
       ) : error ? null : services.length === 0 ? (
@@ -152,7 +187,7 @@ export function MyServicesPage() {
                         {isPaused ? "已暂停" : isEnabled ? "已开通" : "未开通"}
                       </span>
                     </div>
-                    <p>{service.service_code} · 模型：{service.models.join("、") || "暂无"}</p>
+                    <p>{service.service_code} · {service.service_code === "mock-llm-v1" ? "内置 mock-chat；其他模型名请按供应商文档填写，网关会原样转发" : `模型：${service.models.join("、") || "暂无"}`}</p>
                   </div>
                   <Link className="secondary-button" to="/projects">管理项目</Link>
                 </div>

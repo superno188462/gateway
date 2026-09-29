@@ -10,6 +10,7 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     Index,
+    Integer,
     String,
     Text,
     UniqueConstraint,
@@ -277,9 +278,11 @@ class LlmProviderConfig(Base):
 
     id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), primary_key=True, default=uuid4)
     name: Mapped[str] = mapped_column(String(100), unique=True, nullable=False)
+    route_prefix: Mapped[str | None] = mapped_column(String(64))
     base_url: Mapped[str] = mapped_column(String(500), nullable=False)
     encrypted_api_key: Mapped[str] = mapped_column(Text, nullable=False)
     status: Mapped[str] = mapped_column(String(20), nullable=False, server_default="active")
+    priority: Mapped[int] = mapped_column(Integer, nullable=False, server_default="100")
     last_tested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     last_test_success: Mapped[bool | None] = mapped_column()
     last_test_message: Mapped[str | None] = mapped_column(String(250))
@@ -292,7 +295,7 @@ class LlmProviderConfig(Base):
 
 
 class LlmModelConfig(Base):
-    """网关公开模型名到供应商上游模型名的映射。"""
+    """已废弃的旧模型映射记录；保留表结构以避免升级时删除历史数据。"""
 
     __tablename__ = "llm_model_configs"
     __table_args__ = (

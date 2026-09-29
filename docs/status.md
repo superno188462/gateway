@@ -10,14 +10,14 @@
 | A1 | 统一登录、角色、JWT | 四种启动分支和登录流程 | 已完成 |
 | A2 | 项目管理 | CRUD、项目成员权限、标签检索和分页 | 功能已完成；隔离 PostgreSQL 集成验收待执行 |
 | A3 | API Key | owner/editor 可查看明文、加密存储、撤销 | 已完成 |
-| A4 | LLM 网关与 OpenAI 兼容上游 | 用户级额度、项目分配、项目 Key 调用、模型映射与上游连接池 | 功能已完成；真实供应商经网关端到端验证待执行 |
+| A4 | LLM 网关与 OpenAI 兼容上游 | 用户级额度、项目分配、项目 Key 调用、同名直通与优先级故障切换 | 功能已完成；真实供应商经网关端到端验证待执行 |
 | A5 | 日志与用量 | 筛选、分页、汇总一致 | 未开始 |
 | A6 | 模板与记忆 | 固定目录、文件 CRUD、并发冲突 | 未开始 |
 | A7 | 公网部署 | TLS、限流、备份、回滚和安全验收 | 未开始 |
 
 ## 当前阶段
 
-- 当前：A4 LLM 网关、管理员供应商配置页面、OpenAI 兼容上游连接池和用户级额度均已实现。
+- 当前：A4 LLM 网关、管理员供应商配置页面、OpenAI 兼容上游连接池和用户级额度均已实现；上游模型名默认同名直通。
 - 本轮不包含：ASR/TTS/Embedding/RAG/记忆/画像、A5 日志页面和公网部署。
 - 运行约定：后端 `uv run python main.py`；前端在 F0 后使用 `npm run dev`；运行时数据库使用服务器 PostgreSQL。Docker 仅用于后续服务器部署。
 - DI 约定：`AppContainer` 注册配置、数据库引擎和基础设施服务单例；路由通过 FastAPI `Depends` 获取，不自行创建服务。
@@ -141,17 +141,21 @@
 
 ## A4 LLM 网关与 OpenAI 兼容供应商连接池
 
-- 新增迁移 `20260928_0011_llm_provider_configs` 与 `20260929_0012_llm_provider_pools`：供应商连接保存名称、Base URL、密文 API Key 和最近连通性测试状态；模型映射允许同一公开模型名关联多个上游连接。
-- 管理员 API 支持连接和模型映射的增删改、启用/停用；连通性测试使用该连接已启用的上游模型发送最小 `/chat/completions` 请求，不要求供应商实现 `/models`；API 只返回 Key 是否已配置和测试摘要。
-- LLM 网关按公开模型名轮询连接池；连接异常、限流和上游服务错误时切换其他连接，最多尝试 3 个。单一连接仍然可用，内置 `mock-chat` 行为不变。
+- 新增迁移 `20260929_0013_llm_provider_priority` 和 `20260929_0014_llm_provider_route_prefix`：供应商连接支持优先级和可选路由前缀；旧模型映射表暂时保留历史数据，但不再参与调用或管理员 API。
+- 管理员 API 支持连接增删改、优先级和启用/停用；连通性测试请求提交临时模型名，向该连接发送最小 `/chat/completions` 请求；API 只返回 Key 是否已配置和测试摘要。
+- LLM 网关默认把调用方模型名原样传给全局上游池；`prefix/model` 只路由到配置了该前缀的连接组，并去掉前缀后转发模型名。组内从优先级最高的启用连接开始；网络错误、400/401/403/404/408/409/422/429 或 5xx 时按顺序切换。内置 `mock-chat` 行为不变。
 - Chat Completions 网关保留并透传标准采样参数、tools、response_format 和未声明扩展字段；供应商兼容响应字段（含工具调用结果）原样保留，公开响应中的 model 仍使用网关模型名。上游以 400/422 拒绝参数时返回清晰的参数错误，不记正文。
 - `stream_options.include_usage` 可用；未实现的 stream option 返回 422，不静默丢弃。当前 `stream: true` 会先等上游完整响应，再由网关编码 SSE，尚未实现上游实时 SSE 的端到端透传。
 - 上游 API Key 以 `LLM_PROVIDER_SECRET_KEY` 加密；第三方 URL 只允许 HTTPS，本机调试允许 loopback HTTP。
-- 已对获准测试库运行 `uv run alembic upgrade head`，当前版本 `20260929_0012 (head)`；集成测试覆盖多连接同模型、密文存储、模型池解析和连通性测试。
-- 管理员前端入口为 `/admin/llm/providers`，支持创建/修改/删除连接、Key 轮换、连通性测试、模型映射维护和连接池概览；密钥不会从服务端读回。
+- 已对获准测试库运行 `uv run alembic upgrade head`，当前版本为 `20260929_0014 (head)`；集成测试覆盖同名透传、前缀路由、优先级顺序、密文存储和连通性测试。
+- 管理员前端入口为 `/admin/llm/providers`，支持创建/修改/删除连接、前缀分组、Key 轮换、优先级设置和输入模型名测试连接；密钥不会从服务端读回。
+- 本轮验证：`uv run pytest tests -q`（28 passed，4 skipped；跳过项要求单独配置 `TEST_DATABASE_URL`）、`uv run ruff check app tests`、`uv run mypy app`、`npm run build`、`npm run lint` 均通过。
 - 后端 `uv run pytest tests -q`：23 项通过、4 项因未配置 `TEST_DATABASE_URL` 跳过；ruff、mypy 和 OpenAPI 契约测试通过。
 - 前端 `npm run typecheck`、`npm run lint`、`npm run build`：全部通过。
 - HTTP 集成测试使用真实 PostgreSQL 和模拟上游验证管理员权限、供应商 CRUD、密钥不泄露、最小聊天连通性请求和公开模型列表。真实方舟直连已由用户使用 curl 验证；网关经真实上游的完整调用仍待验证。
+- 普通登录用户可通过 `GET /api/v1/llm/provider-catalog` 查看当前启用的默认池和路由前缀组、管理员配置的供应商显示名称及连接数；“我的服务”页展示这些供应商名称、路由前缀和 `前缀/模型名` 调用格式。目录不泄露 Base URL、优先级或 Key。
+- 针对该目录新增 HTTP 集成测试，验证未登录拒绝、普通用户读取成功、管理员也可读取及返回体不含上游敏感字段；`uv run pytest tests/integration/test_llm_provider_admin_api.py -m integration -q`：1 passed。
+- 更新后验证：`uv run pytest tests -q`：28 passed、4 skipped（缺少 `TEST_DATABASE_URL`）；ruff、格式检查、mypy、OpenAPI 契约测试通过；前端 typecheck、lint、build 通过。
 
 ### 验证环境说明
 

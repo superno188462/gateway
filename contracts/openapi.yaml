@@ -851,7 +851,7 @@ paths:
       tags:
       - LLM Gateway
       summary: 调用 OpenAI 兼容 Chat Completions 网关
-      description: 通过项目 API Key 自动解析项目并执行额度校验；兼容参数透传到供应商，请求正文不被保存。stream 当前由网关缓冲上游结果后编码为 SSE。
+      description: 通过项目 API Key 自动解析项目并执行额度校验；请求正文不被保存。
       operationId: chat_completions_v1_chat_completions_post
       requestBody:
         content:
@@ -877,8 +877,8 @@ paths:
     get:
       tags:
       - LLM
-      summary: 列出可调用的 LLM 模型
-      description: 返回可传入 Chat Completions 的公开模型名，不含供应商信息。
+      summary: 列出网关内置的 LLM 模型
+      description: 返回网关内置模型；上游模型由调用方提供，无法从静态目录枚举。
       operationId: list_available_models_api_v1_llm_models_get
       responses:
         '200':
@@ -890,12 +890,28 @@ paths:
                   type: string
                 type: array
                 title: Response List Available Models Api V1 Llm Models Get
+  /api/v1/llm/provider-catalog:
+    get:
+      tags:
+      - LLM
+      summary: 查看可用的 LLM 路由前缀
+      description: 认证用户查看启用的路由组及供应商显示名，不返回敏感配置。
+      operationId: get_public_provider_catalog_api_v1_llm_provider_catalog_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublicProviderCatalogResponse'
+      security:
+      - HTTPBearer: []
   /api/admin/v1/llm/providers:
     get:
       tags:
       - LLM Provider Management
       summary: 列出 LLM 供应商配置
-      description: 管理员查看供应商 URL、密钥配置状态和模型映射。
+      description: 管理员查看供应商 URL、连接优先级和密钥配置状态。
       operationId: list_providers_api_admin_v1_llm_providers_get
       responses:
         '200':
@@ -976,7 +992,7 @@ paths:
       tags:
       - LLM Provider Management
       summary: 删除 LLM 供应商
-      description: 删除供应商及其模型映射。
+      description: 删除供应商连接。
       operationId: delete_provider_api_admin_v1_llm_providers__provider_id__delete
       security:
       - HTTPBearer: []
@@ -1002,7 +1018,7 @@ paths:
       tags:
       - LLM Provider Management
       summary: 测试 LLM 供应商连通性
-      description: 使用该连接的首个已启用模型发送最小 Chat Completions 请求；至少需要一个启用的模型映射。不返回原始响应或密钥。
+      description: 使用管理员提供的模型名发送最小请求，不返回上游原始响应或密钥。
       operationId: test_provider_api_admin_v1_llm_providers__provider_id__test_post
       security:
       - HTTPBearer: []
@@ -1014,6 +1030,12 @@ paths:
           type: string
           format: uuid
           title: Provider Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProviderTestRequest'
       responses:
         '200':
           description: Successful Response
@@ -1021,103 +1043,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ProviderTestResponse'
-        '422':
-          description: Validation Error
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/HTTPValidationError'
-  /api/admin/v1/llm/providers/{provider_id}/models:
-    post:
-      tags:
-      - LLM Provider Management
-      summary: 为供应商添加模型
-      description: 添加网关公开名称与供应商上游模型名的映射。
-      operationId: create_model_api_admin_v1_llm_providers__provider_id__models_post
-      security:
-      - HTTPBearer: []
-      parameters:
-      - name: provider_id
-        in: path
-        required: true
-        schema:
-          type: string
-          format: uuid
-          title: Provider Id
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/CreateModelRequest'
-      responses:
-        '201':
-          description: Successful Response
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ModelResponse'
-        '422':
-          description: Validation Error
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/HTTPValidationError'
-  /api/admin/v1/llm/models/{model_id}:
-    patch:
-      tags:
-      - LLM Provider Management
-      summary: 修改 LLM 模型映射
-      description: 修改对外名称、上游模型名或启用状态。
-      operationId: update_model_api_admin_v1_llm_models__model_id__patch
-      security:
-      - HTTPBearer: []
-      parameters:
-      - name: model_id
-        in: path
-        required: true
-        schema:
-          type: string
-          format: uuid
-          title: Model Id
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/UpdateModelRequest'
-      responses:
-        '200':
-          description: Successful Response
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ModelResponse'
-        '422':
-          description: Validation Error
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/HTTPValidationError'
-    delete:
-      tags:
-      - LLM Provider Management
-      summary: 删除 LLM 模型映射
-      description: 删除模型映射。
-      operationId: delete_model_api_admin_v1_llm_models__model_id__delete
-      security:
-      - HTTPBearer: []
-      parameters:
-      - name: model_id
-        in: path
-        required: true
-        schema:
-          type: string
-          format: uuid
-          title: Model Id
-      responses:
-        '204':
-          description: Successful Response
         '422':
           description: Validation Error
           content:
@@ -1282,8 +1207,10 @@ components:
       properties:
         model:
           type: string
+          maxLength: 200
+          minLength: 1
           title: Model
-          description: 服务模型标识，例如 mock-chat。
+          description: 模型标识；供应商连接原样接收此名称，必须填写供应商支持的模型名。
         messages:
           items:
             $ref: '#/components/schemas/ChatMessageRequest'
@@ -1318,8 +1245,8 @@ components:
         top_p:
           anyOf:
           - type: number
-            exclusiveMinimum: 0.0
             maximum: 1.0
+            exclusiveMinimum: 0.0
           - type: 'null'
           title: Top P
           description: 核采样参数；由上游模型决定是否支持。
@@ -1330,6 +1257,7 @@ components:
             minimum: -2.0
           - type: 'null'
           title: Presence Penalty
+          description: Presence penalty；具体支持范围以供应商为准。
         frequency_penalty:
           anyOf:
           - type: number
@@ -1337,6 +1265,7 @@ components:
             minimum: -2.0
           - type: 'null'
           title: Frequency Penalty
+          description: Frequency penalty；具体支持范围以供应商为准。
         stop:
           anyOf:
           - type: string
@@ -1345,13 +1274,14 @@ components:
             type: array
           - type: 'null'
           title: Stop
+          description: 停止生成序列；按原样转发。
         response_format:
           anyOf:
           - additionalProperties: true
             type: object
           - type: 'null'
           title: Response Format
-          description: 按原样转发 JSON 输出模式等配置。
+          description: 如 json_object 或 json_schema；按原样转发给上游。
         tools:
           anyOf:
           - items:
@@ -1360,7 +1290,7 @@ components:
             type: array
           - type: 'null'
           title: Tools
-          description: 按原样转发 OpenAI function tools 定义。
+          description: OpenAI function tools 定义；按原样转发给上游。
         tool_choice:
           anyOf:
           - type: string
@@ -1368,11 +1298,13 @@ components:
             type: object
           - type: 'null'
           title: Tool Choice
+          description: 工具选择策略；按原样转发。
         parallel_tool_calls:
           anyOf:
           - type: boolean
           - type: 'null'
           title: Parallel Tool Calls
+          description: 是否允许并行工具调用。
         logit_bias:
           anyOf:
           - additionalProperties:
@@ -1380,11 +1312,13 @@ components:
             type: object
           - type: 'null'
           title: Logit Bias
+          description: token 概率偏置映射。
         logprobs:
           anyOf:
           - type: boolean
           - type: 'null'
           title: Logprobs
+          description: 是否返回 token 对数概率。
         top_logprobs:
           anyOf:
           - type: integer
@@ -1392,16 +1326,19 @@ components:
             minimum: 0.0
           - type: 'null'
           title: Top Logprobs
+          description: 返回的候选 token 概率数量。
         seed:
           anyOf:
           - type: integer
           - type: 'null'
           title: Seed
+          description: 尽可能确定性采样的随机种子。
         user:
           anyOf:
           - type: string
           - type: 'null'
           title: User
+          description: 可选的调用方终端用户标识。
         stream:
           type: boolean
           title: Stream
@@ -1411,8 +1348,7 @@ components:
           anyOf:
           - $ref: '#/components/schemas/StreamOptionsRequest'
           - type: 'null'
-          title: Stream Options
-          description: 兼容 OpenAI 的 stream_options；支持 include_usage。
+          description: 流式响应选项；支持 include_usage。
         n:
           anyOf:
           - type: integer
@@ -1421,60 +1357,31 @@ components:
           - type: 'null'
           title: N
           description: 生成选择数量；最多 8 个。
-      type: object
       additionalProperties: true
+      type: object
       required:
       - model
       - messages
       title: ChatCompletionRequest
-      description: OpenAI Chat Completions 请求；未单独声明的供应商扩展字段也会透传。
-    StreamOptionsRequest:
-      properties:
-        include_usage:
-          anyOf:
-          - type: boolean
-          - type: 'null'
-          title: Include Usage
-          description: 为 true 时在 SSE 结束前发送 token 用量 chunk。
-      additionalProperties: false
-      type: object
-      title: StreamOptionsRequest
-      description: 网关支持的流式选项；供应商标准中尚未实现的选项会被拒绝。
+      description: 网关 Chat Completions 请求；额外标准和供应商兼容参数会透传。
     ChatMessageRequest:
       properties:
         role:
           type: string
+          maxLength: 32
+          minLength: 1
           title: Role
-          description: 消息角色；支持供应商兼容的 developer、tool 等角色。
+          description: 消息角色。
         content:
-          description: 文本、多模态数组或供应商兼容内容。
           title: Content
+          description: 消息内容；文本、多模态数组或供应商兼容格式。
       additionalProperties: true
       type: object
       required:
       - role
       - content
       title: ChatMessageRequest
-      description: 兼容 Chat Completions 的单条消息；服务端不持久化正文。
-    CreateModelRequest:
-      properties:
-        model_code:
-          type: string
-          maxLength: 100
-          minLength: 1
-          title: Model Code
-          description: 网关调用方使用的模型标识。
-        upstream_model:
-          type: string
-          maxLength: 200
-          minLength: 1
-          title: Upstream Model
-          description: 供应商定义的模型标识。
-      type: object
-      required:
-      - model_code
-      - upstream_model
-      title: CreateModelRequest
+      description: 兼容 Chat Completions 的消息，允许 tool 和多模态等扩展字段。
     CreateProviderRequest:
       properties:
         name:
@@ -1483,6 +1390,13 @@ components:
           minLength: 1
           title: Name
           description: 管理员自定义的供应商名称。
+        route_prefix:
+          anyOf:
+          - type: string
+            maxLength: 64
+          - type: 'null'
+          title: Route Prefix
+          description: 可选模型路由前缀，例如 volc；留空表示只参与默认池。
         base_url:
           type: string
           maxLength: 500
@@ -1560,34 +1474,6 @@ components:
       - password
       title: LoginRequest
       description: 统一用户登录请求。
-    ModelResponse:
-      properties:
-        id:
-          type: string
-          format: uuid
-          title: Id
-        model_code:
-          type: string
-          title: Model Code
-          description: 调用方传给网关的公开模型名。
-        upstream_model:
-          type: string
-          title: Upstream Model
-          description: 发送给第三方供应商的模型名。
-        status:
-          type: string
-          enum:
-          - active
-          - disabled
-          title: Status
-      type: object
-      required:
-      - id
-      - model_code
-      - upstream_model
-      - status
-      title: ModelResponse
-      description: 网关公开模型及上游模型映射。
     ProjectCreateRequest:
       properties:
         name:
@@ -1890,6 +1776,12 @@ components:
         name:
           type: string
           title: Name
+        route_prefix:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Route Prefix
+          description: 可选模型路由前缀；相同前缀的连接组成独立故障切换组。
         base_url:
           type: string
           title: Base Url
@@ -1899,6 +1791,10 @@ components:
           - active
           - disabled
           title: Status
+        priority:
+          type: integer
+          title: Priority
+          description: 越小越先尝试；上游失败时按此顺序切换。
         api_key_configured:
           type: boolean
           title: Api Key Configured
@@ -1917,24 +1813,32 @@ components:
           - type: string
           - type: 'null'
           title: Last Test Message
-        models:
-          items:
-            $ref: '#/components/schemas/ModelResponse'
-          type: array
-          title: Models
       type: object
       required:
       - id
       - name
+      - route_prefix
       - base_url
       - status
+      - priority
       - api_key_configured
       - last_tested_at
       - last_test_success
       - last_test_message
-      - models
       title: ProviderResponse
       description: 供应商可公开配置；永不包含其 API Key 或密文。
+    ProviderTestRequest:
+      properties:
+        model:
+          type: string
+          maxLength: 200
+          minLength: 1
+          title: Model
+          description: 用于该连接测试的上游模型名。
+      type: object
+      required:
+      - model
+      title: ProviderTestRequest
     ProviderTestResponse:
       properties:
         success:
@@ -1953,6 +1857,42 @@ components:
       - tested_at
       title: ProviderTestResponse
       description: 供应商连通性测试结果。
+    PublicProviderCatalogResponse:
+      properties:
+        groups:
+          items:
+            $ref: '#/components/schemas/PublicRouteGroupResponse'
+          type: array
+          title: Groups
+      type: object
+      required:
+      - groups
+      title: PublicProviderCatalogResponse
+    PublicRouteGroupResponse:
+      properties:
+        prefix:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Prefix
+          description: null 表示默认池；非空值可作为 model 前缀。
+        providers:
+          items:
+            type: string
+          type: array
+          title: Providers
+          description: 管理员配置的供应商显示名称。
+        connection_count:
+          type: integer
+          title: Connection Count
+          description: 当前启用的上游连接数量。
+      type: object
+      required:
+      - prefix
+      - providers
+      - connection_count
+      title: PublicRouteGroupResponse
+      description: 调用方可用的供应商名称和模型路由前缀摘要。
     QuotaTargetResponse:
       properties:
         id:
@@ -2046,6 +1986,18 @@ components:
       required:
       - monthly_token_limit
       title: SetUserServiceQuotaRequest
+    StreamOptionsRequest:
+      properties:
+        include_usage:
+          anyOf:
+          - type: boolean
+          - type: 'null'
+          title: Include Usage
+          description: 为 true 时在 SSE 结束前发送 token 用量 chunk。
+      additionalProperties: false
+      type: object
+      title: StreamOptionsRequest
+      description: 网关支持的流式选项；供应商标准中尚未实现的选项会被拒绝。
     TokenResponse:
       properties:
         access_token:
@@ -2065,32 +2017,6 @@ components:
       - expires_in
       title: TokenResponse
       description: 管理员访问令牌响应。
-    UpdateModelRequest:
-      properties:
-        model_code:
-          anyOf:
-          - type: string
-            maxLength: 100
-            minLength: 1
-          - type: 'null'
-          title: Model Code
-        upstream_model:
-          anyOf:
-          - type: string
-            maxLength: 200
-            minLength: 1
-          - type: 'null'
-          title: Upstream Model
-        status:
-          anyOf:
-          - type: string
-            enum:
-            - active
-            - disabled
-          - type: 'null'
-          title: Status
-      type: object
-      title: UpdateModelRequest
     UpdateProviderRequest:
       properties:
         name:
@@ -2100,6 +2026,13 @@ components:
             minLength: 1
           - type: 'null'
           title: Name
+        route_prefix:
+          anyOf:
+          - type: string
+            maxLength: 64
+          - type: 'null'
+          title: Route Prefix
+          description: 空字符串清除前缀。
         base_url:
           anyOf:
           - type: string
@@ -2121,6 +2054,14 @@ components:
             - disabled
           - type: 'null'
           title: Status
+        priority:
+          anyOf:
+          - type: integer
+            maximum: 1000000.0
+            minimum: 0.0
+          - type: 'null'
+          title: Priority
+          description: 越小越优先。
       type: object
       title: UpdateProviderRequest
     UserResponse:

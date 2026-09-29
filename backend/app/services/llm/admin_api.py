@@ -1,4 +1,4 @@
-"""管理员维护 LLM 上游供应商和模型映射的 API。"""
+"""管理员维护 LLM 上游供应商连接、优先级和连通性测试的 API。"""
 
 from typing import Annotated, Literal
 from uuid import UUID
@@ -7,15 +7,20 @@ import httpx
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 
-from app.container import get_current_admin, get_http_client, get_llm_configuration_service
+from app.container import (
+    get_current_admin,
+    get_current_user,
+    get_http_client,
+    get_llm_configuration_service,
+)
 from app.infrastructure.db.models import User
 from app.services.llm.configuration import (
     LlmConfigurationConflictError,
     LlmConfigurationNotFoundError,
     LlmConfigurationService,
     LlmConfigurationValidationError,
-    LlmModelInfo,
     LlmProviderInfo,
+    LlmProviderRouteGroup,
     ProviderTestResult,
 )
 
@@ -23,22 +28,16 @@ router = APIRouter(prefix="/api/admin/v1/llm", tags=["LLM Provider Management"])
 public_router = APIRouter(prefix="/api/v1/llm", tags=["LLM"])
 
 
-class ModelResponse(BaseModel):
-    """网关公开模型及上游模型映射。"""
+class PublicRouteGroupResponse(BaseModel):
+    """调用方可用的供应商名称和模型路由前缀摘要。"""
 
-    id: UUID
-    model_code: str = Field(description="调用方传给网关的公开模型名。")
-    upstream_model: str = Field(description="发送给第三方供应商的模型名。")
-    status: Literal["active", "disabled"]
+    prefix: str | None = Field(description="null 表示默认池；非空值可作为 model 前缀。")
+    providers: list[str] = Field(description="管理员配置的供应商显示名称。")
+    connection_count: int = Field(description="当前启用的上游连接数量。")
 
-    @classmethod
-    def from_info(cls, info: LlmModelInfo) -> "ModelResponse":
-        return cls(
-            id=info.id,
-            model_code=info.model_code,
-            upstream_model=info.upstream_model,
-            status=info.status,
-        )
+
+class PublicProviderCatalogResponse(BaseModel):
+    groups: list[PublicRouteGroupResponse]
 
 
 class ProviderResponse(BaseModel):
@@ -46,26 +45,30 @@ class ProviderResponse(BaseModel):
 
     id: UUID
     name: str
+    route_prefix: str | None = Field(
+        description="可选模型路由前缀；相同前缀的连接组成独立故障切换组。"
+    )
     base_url: str
     status: Literal["active", "disabled"]
+    priority: int = Field(description="越小越先尝试；上游失败时按此顺序切换。")
     api_key_configured: bool
     last_tested_at: str | None
     last_test_success: bool | None
     last_test_message: str | None
-    models: list[ModelResponse]
 
     @classmethod
     def from_info(cls, info: LlmProviderInfo) -> "ProviderResponse":
         return cls(
             id=info.id,
             name=info.name,
+            route_prefix=info.route_prefix,
             base_url=info.base_url,
             status=info.status,
+            priority=info.priority,
             api_key_configured=info.api_key_configured,
             last_tested_at=(info.last_tested_at.isoformat() if info.last_tested_at else None),
             last_test_success=info.last_test_success,
             last_test_message=info.last_test_message,
-            models=[ModelResponse.from_info(model) for model in info.models],
         )
 
 
@@ -87,26 +90,26 @@ class ProviderTestResponse(BaseModel):
 
 class CreateProviderRequest(BaseModel):
     name: str = Field(min_length=1, max_length=100, description="管理员自定义的供应商名称。")
+    route_prefix: str | None = Field(
+        default=None,
+        max_length=64,
+        description="可选模型路由前缀，例如 volc；留空表示只参与默认池。",
+    )
     base_url: str = Field(max_length=500, description="OpenAI 兼容 API Base URL，通常以 /v1 结尾。")
     api_key: str = Field(min_length=1, max_length=4000, description="上游供应商 API Key，仅写入。")
 
 
 class UpdateProviderRequest(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=100)
+    route_prefix: str | None = Field(default=None, max_length=64, description="空字符串清除前缀。")
     base_url: str | None = Field(default=None, max_length=500)
     api_key: str | None = Field(default=None, max_length=4000, description="留空表示不轮换密钥。")
     status: Literal["active", "disabled"] | None = None
+    priority: int | None = Field(default=None, ge=0, le=1_000_000, description="越小越优先。")
 
 
-class CreateModelRequest(BaseModel):
-    model_code: str = Field(min_length=1, max_length=100, description="网关调用方使用的模型标识。")
-    upstream_model: str = Field(min_length=1, max_length=200, description="供应商定义的模型标识。")
-
-
-class UpdateModelRequest(BaseModel):
-    model_code: str | None = Field(default=None, min_length=1, max_length=100)
-    upstream_model: str | None = Field(default=None, min_length=1, max_length=200)
-    status: Literal["active", "disabled"] | None = None
+class ProviderTestRequest(BaseModel):
+    model: str = Field(min_length=1, max_length=200, description="用于该连接测试的上游模型名。")
 
 
 def _raise_configuration_error(error: RuntimeError) -> HTTPException:
@@ -126,7 +129,7 @@ async def list_providers(
     _: Annotated[User, Depends(get_current_admin)],
     service: Annotated[LlmConfigurationService, Depends(get_llm_configuration_service)],
 ) -> list[ProviderResponse]:
-    """管理员查看供应商 URL、密钥配置状态和模型映射。"""
+    """管理员查看供应商 URL、连接优先级和密钥配置状态。"""
     return [ProviderResponse.from_info(item) for item in await service.list_providers()]
 
 
@@ -143,7 +146,9 @@ async def create_provider(
 ) -> ProviderResponse:
     """创建 OpenAI 兼容供应商，并在服务端加密保存 API Key。"""
     try:
-        result = await service.create_provider(payload.name, payload.base_url, payload.api_key)
+        result = await service.create_provider(
+            payload.name, payload.base_url, payload.api_key, payload.route_prefix
+        )
     except RuntimeError as error:
         raise _raise_configuration_error(error) from error
     return ProviderResponse.from_info(result)
@@ -166,6 +171,8 @@ async def update_provider(
             base_url=payload.base_url,
             api_key=payload.api_key,
             status=payload.status,
+            priority=payload.priority,
+            route_prefix=payload.route_prefix,
         )
     except RuntimeError as error:
         raise _raise_configuration_error(error) from error
@@ -179,13 +186,14 @@ async def update_provider(
 )
 async def test_provider(
     provider_id: UUID,
+    payload: ProviderTestRequest,
     _: Annotated[User, Depends(get_current_admin)],
     service: Annotated[LlmConfigurationService, Depends(get_llm_configuration_service)],
     http_client: Annotated[httpx.AsyncClient, Depends(get_http_client)],
 ) -> ProviderTestResponse:
-    """使用一个已启用模型发送最小聊天请求测试连接，不返回上游原始响应或密钥。"""
+    """使用管理员提供的模型名发送最小请求，不返回上游原始响应或密钥。"""
     try:
-        result = await service.test_provider(provider_id, http_client)
+        result = await service.test_provider(provider_id, payload.model, http_client)
     except RuntimeError as error:
         raise _raise_configuration_error(error) from error
     return ProviderTestResponse.from_result(result)
@@ -199,71 +207,39 @@ async def delete_provider(
     _: Annotated[User, Depends(get_current_admin)],
     service: Annotated[LlmConfigurationService, Depends(get_llm_configuration_service)],
 ) -> None:
-    """删除供应商及其模型映射。"""
+    """删除供应商连接。"""
     try:
         await service.delete_provider(provider_id)
     except RuntimeError as error:
         raise _raise_configuration_error(error) from error
 
 
-@router.post(
-    "/providers/{provider_id}/models",
-    response_model=ModelResponse,
-    status_code=status.HTTP_201_CREATED,
-    summary="为供应商添加模型",
-)
-async def create_model(
-    provider_id: UUID,
-    payload: CreateModelRequest,
-    _: Annotated[User, Depends(get_current_admin)],
-    service: Annotated[LlmConfigurationService, Depends(get_llm_configuration_service)],
-) -> ModelResponse:
-    """添加网关公开名称与供应商上游模型名的映射。"""
-    try:
-        result = await service.create_model(provider_id, payload.model_code, payload.upstream_model)
-    except RuntimeError as error:
-        raise _raise_configuration_error(error) from error
-    return ModelResponse.from_info(result)
-
-
-@router.patch("/models/{model_id}", response_model=ModelResponse, summary="修改 LLM 模型映射")
-async def update_model(
-    model_id: UUID,
-    payload: UpdateModelRequest,
-    _: Annotated[User, Depends(get_current_admin)],
-    service: Annotated[LlmConfigurationService, Depends(get_llm_configuration_service)],
-) -> ModelResponse:
-    """修改对外名称、上游模型名或启用状态。"""
-    try:
-        result = await service.update_model(
-            model_id,
-            model_code=payload.model_code,
-            upstream_model=payload.upstream_model,
-            status=payload.status,
-        )
-    except RuntimeError as error:
-        raise _raise_configuration_error(error) from error
-    return ModelResponse.from_info(result)
-
-
-@router.delete(
-    "/models/{model_id}", status_code=status.HTTP_204_NO_CONTENT, summary="删除 LLM 模型映射"
-)
-async def delete_model(
-    model_id: UUID,
-    _: Annotated[User, Depends(get_current_admin)],
-    service: Annotated[LlmConfigurationService, Depends(get_llm_configuration_service)],
-) -> None:
-    """删除模型映射。"""
-    try:
-        await service.delete_model(model_id)
-    except RuntimeError as error:
-        raise _raise_configuration_error(error) from error
-
-
-@public_router.get("/models", response_model=list[str], summary="列出可调用的 LLM 模型")
+@public_router.get("/models", response_model=list[str], summary="列出网关内置的 LLM 模型")
 async def list_available_models(
     service: Annotated[LlmConfigurationService, Depends(get_llm_configuration_service)],
 ) -> list[str]:
-    """返回可传入 Chat Completions 的公开模型名，不含供应商信息。"""
+    """返回网关内置模型；上游模型由调用方提供，无法从静态目录枚举。"""
     return list(await service.active_model_codes())
+
+
+@public_router.get(
+    "/provider-catalog",
+    response_model=PublicProviderCatalogResponse,
+    summary="查看可用的 LLM 路由前缀",
+)
+async def get_public_provider_catalog(
+    _: Annotated[User, Depends(get_current_user)],
+    service: Annotated[LlmConfigurationService, Depends(get_llm_configuration_service)],
+) -> PublicProviderCatalogResponse:
+    """认证用户查看启用的路由组及供应商显示名，不返回敏感配置。"""
+    groups: tuple[LlmProviderRouteGroup, ...] = await service.list_public_route_groups()
+    return PublicProviderCatalogResponse(
+        groups=[
+            PublicRouteGroupResponse(
+                prefix=group.prefix,
+                providers=list(group.provider_names),
+                connection_count=group.connection_count,
+            )
+            for group in groups
+        ]
+    )
