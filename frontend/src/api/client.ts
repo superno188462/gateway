@@ -124,14 +124,11 @@ export type RequestLog = {
   project_id: string | null;
   project_name: string | null;
   service_code: string;
-  model: string;
   status: "received" | "succeeded" | "failed" | "denied";
-  prompt_tokens: number;
-  completion_tokens: number;
-  total_tokens: number;
   latency_ms: number;
   error_code: string | null;
   error_message: string | null;
+  description: string | null;
   created_at: string;
 };
 
@@ -261,7 +258,6 @@ export const apiClient = {
       startAt?: string;
       endAt?: string;
       status?: RequestLog["status"];
-      model?: string;
       serviceCode?: string;
       requestId?: string;
       page?: number;
@@ -272,7 +268,6 @@ export const apiClient = {
     if (filters.startAt) params.set("start_at", filters.startAt);
     if (filters.endAt) params.set("end_at", filters.endAt);
     if (filters.status) params.set("status", filters.status);
-    if (filters.model) params.set("model", filters.model);
     if (filters.serviceCode) params.set("service_code", filters.serviceCode);
     if (filters.requestId) params.set("request_id", filters.requestId);
     if (filters.page !== undefined) params.set("page", String(filters.page));
@@ -287,7 +282,6 @@ export const apiClient = {
       endAt?: string;
       projectId?: string;
       status?: RequestLog["status"];
-      model?: string;
       serviceCode?: string;
       requestId?: string;
       page?: number;
@@ -299,7 +293,6 @@ export const apiClient = {
     if (filters.endAt) params.set("end_at", filters.endAt);
     if (filters.projectId) params.set("project_id", filters.projectId);
     if (filters.status) params.set("status", filters.status);
-    if (filters.model) params.set("model", filters.model);
     if (filters.serviceCode) params.set("service_code", filters.serviceCode);
     if (filters.requestId) params.set("request_id", filters.requestId);
     if (filters.page !== undefined) params.set("page", String(filters.page));

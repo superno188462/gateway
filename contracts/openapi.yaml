@@ -1172,17 +1172,6 @@ paths:
             maxLength: 50
           - type: 'null'
           title: Service Code
-      - name: model
-        in: query
-        required: false
-        schema:
-          anyOf:
-          - type: string
-            maxLength: 100
-          - type: 'null'
-          description: 模型名包含筛选。
-          title: Model
-        description: 模型名包含筛选。
       - name: request_id
         in: query
         required: false
@@ -1354,15 +1343,6 @@ paths:
             maxLength: 50
           - type: 'null'
           title: Service Code
-      - name: model
-        in: query
-        required: false
-        schema:
-          anyOf:
-          - type: string
-            maxLength: 100
-          - type: 'null'
-          title: Model
       - name: request_id
         in: query
         required: false
@@ -2532,21 +2512,9 @@ components:
         service_code:
           type: string
           title: Service Code
-        model:
-          type: string
-          title: Model
         status:
           type: string
           title: Status
-        prompt_tokens:
-          type: integer
-          title: Prompt Tokens
-        completion_tokens:
-          type: integer
-          title: Completion Tokens
-        total_tokens:
-          type: integer
-          title: Total Tokens
         latency_ms:
           type: integer
           title: Latency Ms
@@ -2560,6 +2528,11 @@ components:
           - type: string
           - type: 'null'
           title: Error Message
+        description:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Description
         created_at:
           type: string
           format: date-time
@@ -2571,14 +2544,11 @@ components:
       - project_id
       - project_name
       - service_code
-      - model
       - status
-      - prompt_tokens
-      - completion_tokens
-      - total_tokens
       - latency_ms
       - error_code
       - error_message
+      - description
       - created_at
       title: RequestLogResponse
       description: 隐私安全的请求元数据，不包含 Authorization、提示词和回复正文。

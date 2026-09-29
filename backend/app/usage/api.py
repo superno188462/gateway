@@ -32,14 +32,11 @@ class RequestLogResponse(BaseModel):
     project_id: UUID | None
     project_name: str | None
     service_code: str
-    model: str
     status: str
-    prompt_tokens: int
-    completion_tokens: int
-    total_tokens: int
     latency_ms: int
     error_code: str | None
     error_message: str | None
+    description: str | None
     created_at: datetime
 
     @classmethod
@@ -50,14 +47,11 @@ class RequestLogResponse(BaseModel):
             project_id=item.project_id,
             project_name=item.project_name,
             service_code=item.service_code,
-            model=item.model,
             status=item.status,
-            prompt_tokens=item.prompt_tokens,
-            completion_tokens=item.completion_tokens,
-            total_tokens=item.total_tokens,
             latency_ms=item.latency_ms,
             error_code=item.error_code,
             error_message=item.error_message,
+            description=item.description,
             created_at=item.created_at,
         )
 
@@ -197,7 +191,6 @@ async def list_requests(
         Query(alias="status", description="请求状态筛选。"),
     ] = None,
     service_code: Annotated[str | None, Query(max_length=50)] = None,
-    model: Annotated[str | None, Query(max_length=100, description="模型名包含筛选。")] = None,
     request_id: Annotated[
         str | None, Query(max_length=64, description="请求 ID 精确筛选。")
     ] = None,
@@ -216,7 +209,6 @@ async def list_requests(
             project_id=project_id,
             status=log_status,
             service_code=service_code,
-            model=model,
             request_id=request_id,
             cursor=cursor,
             limit=limit or page_size,
@@ -267,7 +259,6 @@ async def list_all_requests(
         Query(alias="status", description="请求状态筛选。"),
     ] = None,
     service_code: Annotated[str | None, Query(max_length=50)] = None,
-    model: Annotated[str | None, Query(max_length=100)] = None,
     request_id: Annotated[str | None, Query(max_length=64)] = None,
     cursor: Annotated[str | None, Query(max_length=512)] = None,
     page_number: Annotated[int, Query(alias="page", ge=1, description="从 1 开始的页码。")] = 1,
@@ -283,7 +274,6 @@ async def list_all_requests(
             end_at=end,
             project_id=project_id,
             status=log_status,
-            model=model,
             request_id=request_id,
             cursor=cursor,
             limit=limit or page_size,

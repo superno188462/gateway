@@ -191,7 +191,6 @@ async def chat_completions(
         await request_recorder.record_auth_rejection(
             request_id=request_id,
             service_code=LlmGatewayService.service_code,
-            model=payload.model,
             latency_ms=max(0, round((time.perf_counter() - started) * 1000)),
             error_code="missing_api_key",
         )
@@ -207,7 +206,6 @@ async def chat_completions(
         await request_recorder.record_auth_rejection(
             request_id=request_id,
             service_code=LlmGatewayService.service_code,
-            model=payload.model,
             latency_ms=max(0, round((time.perf_counter() - started) * 1000)),
             error_code="invalid_api_key",
         )

@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.application.api_keys import VerifiedApiKey
 from app.infrastructure.db.models import (
+    LlmRequestUsage,
     Project,
     ProjectServiceSubscription,
     ServiceUsageBucket,
@@ -86,8 +87,10 @@ class LlmGatewayService:
             project_id=api_key.project_id,
             api_key_id=api_key.id,
             service_code=self.service_code,
-            model=model,
+            description=f"LLM 请求处理中，模型 {model}",
         )
+        async with self._session_factory.begin() as session:
+            session.add(LlmRequestUsage(request_id=request_id, model=model))
         try:
             model_supported = await self._provider.supports(model)
         except Exception as error:
@@ -106,7 +109,7 @@ class LlmGatewayService:
                 latency_ms=self._latency(started),
                 error_code="routing_error",
                 error_message="LLM 服务路由暂时不可用",
-                result_summary={"response_type": "error"},
+                description=f"LLM 路由失败：{model}",
             )
             raise GatewayRequestError(
                 "routing_error", "LLM 服务路由暂时不可用", 502, request_id
@@ -130,6 +133,7 @@ class LlmGatewayService:
                 latency_ms=self._latency(started),
                 error_code="model_not_found",
                 error_message="请求的模型不存在，或当前没有可用的上游路由",
+                description=f"模型 {model} 不存在或没有可用路由",
             )
             raise GatewayRequestError("model_not_found", "请求的模型不存在", 404, request_id)
         logger.info(
@@ -368,7 +372,7 @@ class LlmGatewayService:
                     latency_ms=self._latency(started),
                     error_code=rejection.code,
                     error_message=str(rejection),
-                    result_summary={"response_type": "error"},
+                    description=f"模型 {model}：{rejection}",
                 )
             else:
                 await self._request_recorder.record_stage_in_session(
@@ -418,24 +422,22 @@ class LlmGatewayService:
             await self._request_recorder.record_stage_in_session(
                 session, request_id, "service_call", "succeeded"
             )
+            llm_usage = await session.get(LlmRequestUsage, request_id, with_for_update=True)
+            if llm_usage is None:
+                raise LookupError(f"LLM 用量记录不存在：{request_id}")
+            llm_usage.prompt_tokens = completion.prompt_tokens
+            llm_usage.completion_tokens = completion.completion_tokens
+            llm_usage.total_tokens = used
+            llm_usage.finish_reason = completion.finish_reason
             await self._request_recorder.finish_in_session(
                 session,
                 request_id,
                 "succeeded",
                 latency_ms=latency_ms,
-                usage_metrics={
-                    "input_tokens": completion.prompt_tokens,
-                    "output_tokens": completion.completion_tokens,
-                    "total_tokens": used,
-                    "unit": "tokens",
-                },
-                result_summary={
-                    "response_type": "chat.completion",
-                    "finish_reason": completion.finish_reason,
-                },
-                prompt_tokens=completion.prompt_tokens,
-                completion_tokens=completion.completion_tokens,
-                total_tokens=used,
+                description=(
+                    f"LLM 调用成功，模型 {llm_usage.model}，消耗 {used} tokens "
+                    f"（输入 {completion.prompt_tokens}，输出 {completion.completion_tokens}）"
+                ),
             )
 
     async def _release_usage(
@@ -479,7 +481,7 @@ class LlmGatewayService:
                 error_code=error_code,
                 error_message=error_message,
                 error_details=error_details,
-                result_summary={"response_type": "error"},
+                description=f"LLM 调用失败：{error_message or error_code}",
             )
 
     @staticmethod

@@ -47,8 +47,8 @@ B0 不创建业务实体。数据库只产生 Alembic 自己的 `alembic_version
 | A1 | `users`，包含唯一管理员约束与密码哈希 |
 | A2 | `projects`（含 `public/private` 可见性）、`project_members`、`project_tags`；公开访问按规则授予只读权限，管理员默认 review 全部项目，owner 管理项目与最多 5 个自定义标签 |
 | A3 | `api_keys`，保存 HMAC-SHA256 摘要与 Fernet 加密密文；一个项目可有多把项目级 Key |
-| A4 | `user_service_quotas`、`project_service_subscriptions`、`service_usage_buckets`、`gateway_requests`；日志不保存提示词或回复正文 |
-| A5 | 查询索引、审计事件和日志保留任务状态 |
+| A4 | `user_service_quotas`、`project_service_subscriptions`、`service_usage_buckets`、通用 `gateway_requests`；LLM 专属用量单独写入 `llm_request_usages` |
+| A5 | 通用请求日志查询、审计阶段和日志保留任务状态；模型与 Token 等服务专属信息不得成为通用日志列 |
 | A6 | `resources` 及乐观并发版本 |
 
 ## 配置契约
@@ -58,6 +58,7 @@ B0 不创建业务实体。数据库只产生 Alembic 自己的 `alembic_version
 - `LOG_LEVEL` 取标准日志级别。
 - `LOG_FILE_PATH` 指定 UTF-8 技术日志路径，默认为 `logs/gateway.log`；`LOG_BACKUP_COUNT` 默认保留 30 个按日轮转的归档文件。技术日志只允许管理员通过系统日志接口读取。
 - `API_KEY_SECRET_KEY` 至少 32 个字符，用于派生 API Key 摘要和加密密钥。未配置时应用可启动，但 Key 管理和验证返回 503；该值必须稳定保存，轮换会使已有 Key 无法解密和验证。
+- `gateway_requests` 固定保存跨服务字段：项目与 Key 归属、服务代码、状态、错误、耗时、Trace ID 和简短结果描述。LLM 模型、Token 用量与结束原因写入 `llm_request_usages`，由 LLM 模块维护。
 - 配置对象由 `AppContainer.settings` 注册为单例；业务代码通过依赖注入取得，不直接调用 `Settings()`。
 - 数据库引擎和基础设施服务由 `AppContainer` 注册为单例，并在应用关闭时统一释放。
 - B0 不校验管理员变量；管理员引导逻辑属于 A1，避免基础设施阶段提前创建业务表。

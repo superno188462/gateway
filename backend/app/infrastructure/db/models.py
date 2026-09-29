@@ -261,19 +261,12 @@ class GatewayRequest(Base):
     project_id: Mapped[UUID | None] = mapped_column(PostgreSQLUUID(as_uuid=True))
     api_key_id: Mapped[UUID | None] = mapped_column(PostgreSQLUUID(as_uuid=True))
     service_code: Mapped[str] = mapped_column(String(50), nullable=False)
-    model: Mapped[str] = mapped_column(String(100), nullable=False)
     status: Mapped[str] = mapped_column(String(20), nullable=False)
     audit_result: Mapped[str] = mapped_column(String(20), nullable=False, server_default="pending")
     audit_steps: Mapped[dict[str, object]] = mapped_column(
         JSON, nullable=False, server_default="{}"
     )
-    result_summary: Mapped[dict[str, object] | None] = mapped_column(JSON)
-    usage_metrics: Mapped[dict[str, object]] = mapped_column(
-        JSON, nullable=False, server_default="{}"
-    )
-    prompt_tokens: Mapped[int] = mapped_column(nullable=False, server_default="0")
-    completion_tokens: Mapped[int] = mapped_column(nullable=False, server_default="0")
-    total_tokens: Mapped[int] = mapped_column(nullable=False, server_default="0")
+    description: Mapped[str | None] = mapped_column(String(1000))
     latency_ms: Mapped[int] = mapped_column(nullable=False, server_default="0")
     error_code: Mapped[str | None] = mapped_column(String(80))
     error_message: Mapped[str | None] = mapped_column(String(500))
@@ -282,6 +275,21 @@ class GatewayRequest(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
+
+
+class LlmRequestUsage(Base):
+    """LLM 请求专属的模型与 Token 计量，不属于通用请求日志字段。"""
+
+    __tablename__ = "llm_request_usages"
+
+    request_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("gateway_requests.request_id", ondelete="CASCADE"), primary_key=True
+    )
+    model: Mapped[str] = mapped_column(String(100), nullable=False)
+    prompt_tokens: Mapped[int] = mapped_column(nullable=False, server_default="0")
+    completion_tokens: Mapped[int] = mapped_column(nullable=False, server_default="0")
+    total_tokens: Mapped[int] = mapped_column(nullable=False, server_default="0")
+    finish_reason: Mapped[str | None] = mapped_column(String(80))
 
 
 class LogRetentionRun(Base):

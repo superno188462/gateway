@@ -36,7 +36,7 @@
 3. API Key 创建、列表、撤销；owner/editor 可随时查看完整 Key，数据库保存 HMAC 摘要与加密密文，不保存明文。
 4. OpenAI 风格的 `POST /v1/chat/completions`，同时支持普通响应和 SSE 流式响应。
 5. 模型路由采用 Provider Adapter；所有涉及第三方的接口第一版使用可重复测试的 Mock Provider，不阻塞主流程开发。
-6. 每次调用生成 `request_id`，记录项目、Key、模型、状态、延迟和 token 用量；暂未配置价格时费用为空。
+6. 每次调用生成 `request_id`；通用请求日志记录项目、Key、服务、状态、耗时、错误与结果描述。LLM 模块独立记录模型和 token 用量；暂未配置价格时费用为空。
 7. Dashboard 支持按项目和时间范围查看调用次数、成功率和 token；费用为空时前端显示 `-`。
 8. 调用日志支持筛选、游标分页和详情查看；不得保存 API Key、Authorization、用户密码或上游密钥。
 9. 提示词模板与记忆文件的固定目录视图及单文件增删改查。
@@ -121,7 +121,8 @@ HTTP API → Application Service → Domain Port ← Infrastructure Adapter
 
 - `projects`：稳定 UUID、名称、状态、能力和模型策略、时间戳。
 - `api_keys`：项目、名称、不可逆 HMAC 摘要、加密密文、前缀、末四位、状态、过期时间、最近使用时间。
-- `gateway_requests`：一次网关请求的状态、延迟、Provider、模型、错误分类和追踪标识。
+- `gateway_requests`：跨服务共用的一次请求状态、耗时、错误分类、结果描述和追踪标识。
+- `llm_request_usages`：LLM 专属的模型、输入/输出 Token、总 Token 和结束原因；其他服务可以定义自己的专属用量模型。
 - `usage_records`：输入/输出 token 或其他计量单位、Provider 原始用量。
 - `cost_records`：可空费用、币种、单价版本、计价单位和最终费用快照。第一版币种为人民币；没有价格配置时不产生金额，API 返回 `null`，前端显示 `-`。后续从版本化 JSON 价格表读取不同模型单价，历史费用不得因价格表变化而重算。
 - `resources`：项目、资源类型、固定分类、名称、内容、版本、软删除时间。

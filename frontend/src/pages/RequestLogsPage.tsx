@@ -45,7 +45,6 @@ export function RequestLogsPage() {
   const [endDate, setEndDate] = useState(initialEnd);
   const [projectId, setProjectId] = useState(routeProjectId ?? "");
   const [status, setStatus] = useState<RequestLog["status"] | "">("");
-  const [model, setModel] = useState("");
   const [serviceCode, setServiceCode] = useState("");
   const [requestId, setRequestId] = useState("");
   const [appliedFilters, setAppliedFilters] = useState({
@@ -53,7 +52,6 @@ export function RequestLogsPage() {
     endDate: initialEnd,
     projectId: routeProjectId ?? "",
     status: "" as RequestLog["status"] | "",
-    model: "",
     serviceCode: "",
     requestId: "",
   });
@@ -92,7 +90,6 @@ export function RequestLogsPage() {
         startAt: utcStart(filters.startDate),
         endAt: utcEndExclusive(filters.endDate),
         ...(filters.status ? { status: filters.status } : {}),
-        ...(filters.model.trim() ? { model: filters.model.trim() } : {}),
         ...(filters.serviceCode.trim() ? { serviceCode: filters.serviceCode.trim() } : {}),
         ...(filters.requestId.trim() ? { requestId: filters.requestId.trim() } : {}),
         page: pageNumber,
@@ -129,7 +126,7 @@ export function RequestLogsPage() {
     event.preventDefault();
     setSelectedLog(null);
     setCurrentPage(1);
-    setAppliedFilters({ startDate, endDate, projectId, status, model, serviceCode, requestId });
+    setAppliedFilters({ startDate, endDate, projectId, status, serviceCode, requestId });
   }
 
   async function showDetails(log: RequestLog) {
@@ -180,7 +177,6 @@ export function RequestLogsPage() {
         <label className="project-field"><span>结束日期（UTC）</span><input onChange={(event) => setEndDate(event.target.value)} required type="date" value={endDate} /></label>
         {isAdmin && <label className="project-field"><span>项目</span><select onChange={(event) => setProjectId(event.target.value)} value={projectId}><option value="">全部项目</option>{projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}</select></label>}
         <label className="project-field"><span>状态</span><select onChange={(event) => setStatus(event.target.value as RequestLog["status"] | "")} value={status}><option value="">全部状态</option><option value="received">处理中</option><option value="succeeded">成功</option><option value="failed">失败</option><option value="denied">权限/额度拒绝</option></select></label>
-        <label className="project-field"><span>模型</span><input maxLength={100} onChange={(event) => setModel(event.target.value)} placeholder="模型名模糊匹配" value={model} /></label>
         <label className="project-field"><span>服务代码</span><input maxLength={50} onChange={(event) => setServiceCode(event.target.value)} placeholder="例如 llm" value={serviceCode} /></label>
         <label className="project-field"><span>Request ID</span><input maxLength={64} onChange={(event) => setRequestId(event.target.value)} placeholder="精确匹配" value={requestId} /></label>
         <button className="primary-button" disabled={loading} type="submit">筛选</button>
@@ -191,8 +187,8 @@ export function RequestLogsPage() {
         {loading && logs.length === 0 ? <div className="empty-state">正在加载日志…</div> : logs.length === 0 ? <div className="empty-state">当前筛选范围没有调用记录。</div> : (
           <div className="request-log-table-wrap">
             <table className="request-log-table">
-              <thead><tr><th>时间（UTC）</th>{isAdmin && <th>项目</th>}<th>服务 / 模型</th><th>状态</th><th>错误诊断</th><th>输入 / 输出 Tokens</th><th>总 Tokens</th><th>延迟</th><th>Trace ID</th></tr></thead>
-              <tbody>{logs.map((log) => <tr className="request-log-row" key={log.request_id} onClick={() => void showDetails(log)} tabIndex={0} onKeyDown={(event) => { if (event.key === "Enter") void showDetails(log); }}><td>{new Date(log.created_at).toLocaleString("zh-CN", { timeZone: "UTC" })}</td>{isAdmin && <td>{log.project_name ?? (log.project_id ? "已删除项目" : "未认证请求")}</td>}<td><code>{log.service_code} / {log.model}</code></td><td><span className={`request-status request-status-${log.status}`}>{readableStatus(log.status)}</span></td><td>{log.error_code ? <><code className="log-error-code">{log.error_code}</code><span className="log-error-message">{log.error_message ?? "调用失败"}</span></> : "-"}</td><td>{formatTokens(log.prompt_tokens)} / {formatTokens(log.completion_tokens)}</td><td>{formatTokens(log.total_tokens)}</td><td>{formatTokens(log.latency_ms)} ms</td><td><code>{log.trace_id}</code></td></tr>)}</tbody>
+              <thead><tr><th>时间（UTC）</th>{isAdmin && <th>项目</th>}<th>服务</th><th>状态</th><th>错误诊断</th><th>结果说明</th><th>耗时</th><th>Trace ID</th></tr></thead>
+              <tbody>{logs.map((log) => <tr className="request-log-row" key={log.request_id} onClick={() => void showDetails(log)} tabIndex={0} onKeyDown={(event) => { if (event.key === "Enter") void showDetails(log); }}><td>{new Date(log.created_at).toLocaleString("zh-CN", { timeZone: "UTC" })}</td>{isAdmin && <td>{log.project_name ?? (log.project_id ? "已删除项目" : "未认证请求")}</td>}<td><code>{log.service_code}</code></td><td><span className={`request-status request-status-${log.status}`}>{readableStatus(log.status)}</span></td><td>{log.error_code ? <><code className="log-error-code">{log.error_code}</code><span className="log-error-message">{log.error_message ?? "调用失败"}</span></> : "-"}</td><td>{log.description ?? "-"}</td><td>{formatTokens(log.latency_ms)} ms</td><td><code>{log.trace_id}</code></td></tr>)}</tbody>
             </table>
           </div>
         )}
@@ -202,8 +198,8 @@ export function RequestLogsPage() {
       {selectedLog && (
         <aside className="project-detail-panel request-log-detail" aria-label="请求日志详情">
           <div className="usage-panel-heading"><div><h3>请求详情</h3><p>{selectedLog.request_id}</p></div><button className="secondary-button" onClick={() => setSelectedLog(null)} type="button">关闭</button></div>
-          <dl><dt>项目</dt><dd>{selectedLog.project_name ?? (selectedLog.project_id ? "已删除项目" : "未认证请求")} {selectedLog.project_id && `· ${selectedLog.project_id}`}</dd><dt>服务 / 模型</dt><dd>{selectedLog.service_code} · {selectedLog.model}</dd><dt>调用结果</dt><dd>{readableStatus(selectedLog.status)}</dd><dt>错误码</dt><dd>{selectedLog.error_code ?? "-"}</dd><dt>原因</dt><dd>{selectedLog.error_message ?? (selectedLog.status === "succeeded" ? "-" : "暂未提供更多信息")}</dd><dt>输入 Tokens</dt><dd>{formatTokens(selectedLog.prompt_tokens)}</dd><dt>输出 Tokens</dt><dd>{formatTokens(selectedLog.completion_tokens)}</dd><dt>总 Tokens</dt><dd>{formatTokens(selectedLog.total_tokens)}</dd><dt>延迟</dt><dd>{formatTokens(selectedLog.latency_ms)} ms</dd><dt>Request ID / Trace ID</dt><dd>{selectedLog.request_id} / {selectedLog.trace_id}</dd><dt>时间（UTC）</dt><dd>{new Date(selectedLog.created_at).toLocaleString("zh-CN", { timeZone: "UTC" })}</dd></dl>
-          <p className="verification-note">此处显示项目调用结果、失败原因和用量。管理员可在技术日志中按 Trace ID 查看认证、额度、路由和上游诊断；不会记录提示词、回复正文或密钥。</p>
+          <dl><dt>项目</dt><dd>{selectedLog.project_name ?? (selectedLog.project_id ? "已删除项目" : "未认证请求")} {selectedLog.project_id && `· ${selectedLog.project_id}`}</dd><dt>服务</dt><dd>{selectedLog.service_code}</dd><dt>调用结果</dt><dd>{readableStatus(selectedLog.status)}</dd><dt>错误码</dt><dd>{selectedLog.error_code ?? "-"}</dd><dt>原因</dt><dd>{selectedLog.error_message ?? (selectedLog.status === "succeeded" ? "-" : "暂未提供更多信息")}</dd><dt>结果说明</dt><dd>{selectedLog.description ?? "-"}</dd><dt>耗时</dt><dd>{formatTokens(selectedLog.latency_ms)} ms</dd><dt>Request ID / Trace ID</dt><dd>{selectedLog.request_id} / {selectedLog.trace_id}</dd><dt>时间（UTC）</dt><dd>{new Date(selectedLog.created_at).toLocaleString("zh-CN", { timeZone: "UTC" })}</dd></dl>
+          <p className="verification-note">此处显示通用请求结果与描述。各服务的专属用量由对应服务单独计量；管理员可在技术日志中按 Trace ID 查看认证、额度、路由和上游诊断。不会记录提示词、回复正文或密钥。</p>
         </aside>
       )}
 

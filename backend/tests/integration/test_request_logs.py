@@ -10,7 +10,13 @@ from sqlalchemy import delete, func, select, text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.config import Settings
-from app.infrastructure.db.models import GatewayRequest, Project, ProjectMember, User
+from app.infrastructure.db.models import (
+    GatewayRequest,
+    LlmRequestUsage,
+    Project,
+    ProjectMember,
+    User,
+)
 from app.usage.application import RequestLogNotFoundError, RequestLogService
 
 pytestmark = pytest.mark.integration
@@ -65,11 +71,7 @@ async def test_request_logs_are_project_scoped_and_summary_matches_rows() -> Non
                         project_id=project.id,
                         api_key_id=uuid4(),
                         service_code="llm",
-                        model="test-model",
                         status="succeeded",
-                        prompt_tokens=12,
-                        completion_tokens=8,
-                        total_tokens=20,
                         latency_ms=100,
                         created_at=now - timedelta(minutes=2),
                     ),
@@ -78,11 +80,7 @@ async def test_request_logs_are_project_scoped_and_summary_matches_rows() -> Non
                         project_id=project.id,
                         api_key_id=uuid4(),
                         service_code="llm",
-                        model="test-model",
                         status="failed",
-                        prompt_tokens=0,
-                        completion_tokens=0,
-                        total_tokens=0,
                         latency_ms=250,
                         error_code="provider_error",
                         created_at=now - timedelta(minutes=1),
@@ -92,13 +90,24 @@ async def test_request_logs_are_project_scoped_and_summary_matches_rows() -> Non
                         project_id=hidden_project.id,
                         api_key_id=uuid4(),
                         service_code="llm",
-                        model="hidden-model",
                         status="succeeded",
+                        latency_ms=1,
+                        created_at=now,
+                    ),
+                    LlmRequestUsage(
+                        request_id=request_ids[0],
+                        model="test-model",
+                        prompt_tokens=12,
+                        completion_tokens=8,
+                        total_tokens=20,
+                    ),
+                    LlmRequestUsage(request_id=request_ids[1], model="test-model"),
+                    LlmRequestUsage(
+                        request_id=request_ids[2],
+                        model="hidden-model",
                         prompt_tokens=900,
                         completion_tokens=900,
                         total_tokens=1800,
-                        latency_ms=1,
-                        created_at=now,
                     ),
                 ]
             )
@@ -186,11 +195,7 @@ async def test_retention_keeps_latest_minimum_without_touching_shared_logs() -> 
                                 project_id=uuid4(),
                                 api_key_id=uuid4(),
                                 service_code="llm",
-                                model="retention-test",
                                 status="succeeded",
-                                prompt_tokens=1,
-                                completion_tokens=1,
-                                total_tokens=2,
                                 latency_ms=1,
                                 created_at=created_at,
                             )

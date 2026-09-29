@@ -31,7 +31,7 @@ class GatewayRequestRecorder:
         project_id: UUID,
         api_key_id: UUID,
         service_code: str,
-        model: str,
+        description: str | None = None,
     ) -> None:
         """认证项目 Key 后、检查额度和调用服务前，先持久化请求与 Trace ID。"""
         async with self._session_factory.begin() as session:
@@ -42,11 +42,10 @@ class GatewayRequestRecorder:
                     project_id=project_id,
                     api_key_id=api_key_id,
                     service_code=service_code,
-                    model=model,
                     status="received",
                     audit_result="allowed",
                     audit_steps={"authentication": {"result": "allowed"}},
-                    usage_metrics={},
+                    description=description,
                 )
             )
 
@@ -55,7 +54,6 @@ class GatewayRequestRecorder:
         *,
         request_id: str,
         service_code: str,
-        model: str,
         latency_ms: int,
         error_code: str,
     ) -> None:
@@ -68,12 +66,10 @@ class GatewayRequestRecorder:
                     project_id=None,
                     api_key_id=None,
                     service_code=service_code,
-                    model=model,
                     status="denied",
                     audit_result="denied",
                     audit_steps={"authentication": {"result": "denied", "error_code": error_code}},
-                    usage_metrics={},
-                    result_summary={"response_type": "error"},
+                    description="请求未通过 API Key 认证",
                     error_code=error_code,
                     error_message={
                         "missing_api_key": "请求缺少项目 API Key",
@@ -124,30 +120,22 @@ class GatewayRequestRecorder:
         outcome: RequestOutcome,
         *,
         latency_ms: int,
-        usage_metrics: dict[str, object] | None = None,
-        result_summary: dict[str, object] | None = None,
+        description: str | None = None,
         error_code: str | None = None,
         error_message: str | None = None,
         error_details: dict[str, object] | None = None,
-        prompt_tokens: int = 0,
-        completion_tokens: int = 0,
-        total_tokens: int = 0,
     ) -> None:
-        """结束一次请求并保存安全结果摘要和通用用量指标，不保存返回正文。"""
+        """结束一次请求并保存通用结果描述，不保存请求或返回正文。"""
         async with self._session_factory.begin() as session:
             await self.finish_in_session(
                 session,
                 request_id,
                 outcome,
                 latency_ms=latency_ms,
-                usage_metrics=usage_metrics,
-                result_summary=result_summary,
+                description=description,
                 error_code=error_code,
                 error_message=error_message,
                 error_details=error_details,
-                prompt_tokens=prompt_tokens,
-                completion_tokens=completion_tokens,
-                total_tokens=total_tokens,
             )
 
     async def finish_in_session(
@@ -157,24 +145,17 @@ class GatewayRequestRecorder:
         outcome: RequestOutcome,
         *,
         latency_ms: int,
-        usage_metrics: dict[str, object] | None = None,
-        result_summary: dict[str, object] | None = None,
+        description: str | None = None,
         error_code: str | None = None,
         error_message: str | None = None,
         error_details: dict[str, object] | None = None,
-        prompt_tokens: int = 0,
-        completion_tokens: int = 0,
-        total_tokens: int = 0,
     ) -> None:
         """在调用方事务内完成请求记录，不保存提示词或返回正文。"""
         record = await self._get_record(session, request_id)
         record.status = outcome
         record.latency_ms = latency_ms
-        record.prompt_tokens = prompt_tokens
-        record.completion_tokens = completion_tokens
-        record.total_tokens = total_tokens
-        record.usage_metrics = usage_metrics or {}
-        record.result_summary = result_summary
+        if description is not None:
+            record.description = description[:1000]
         record.error_code = error_code
         record.error_message = error_message[:500] if error_message else None
         record.error_details = error_details

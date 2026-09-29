@@ -15,6 +15,7 @@ from app.config import Settings
 from app.infrastructure.db.models import (
     AuthSession,
     GatewayRequest,
+    LlmRequestUsage,
     Project,
     ProjectMember,
     ServiceUsageBucket,
@@ -372,11 +373,12 @@ async def test_llm_mock_access_chat_stream_quota_and_upgrade(
                 "routing": {"result": "allowed"},
                 "service_call": {"result": "succeeded"},
             }
-            assert successful_log.result_summary == {
-                "response_type": "chat.completion",
-                "finish_reason": "stop",
-            }
-            assert successful_log.usage_metrics["unit"] == "tokens"
+            successful_usage = await session.get(LlmRequestUsage, successful_request_id)
+            assert successful_usage is not None
+            assert successful_usage.model == "mock-chat"
+            assert successful_usage.total_tokens > 0
+            assert successful_usage.finish_reason == "stop"
+            assert "消耗" in (successful_log.description or "")
             assert successful_log.status == "succeeded"
             assert not {"prompt", "messages", "response", "content"} & set(
                 GatewayRequest.__table__.columns.keys()
@@ -441,9 +443,10 @@ async def test_llm_mock_access_chat_stream_quota_and_upgrade(
                 "audit_result",
                 "audit_steps",
                 "error_details",
-                "result_summary",
-                "usage_metrics",
             } & set(successful_detail.json())
+            assert successful_detail.json()["description"]
+            assert "model" not in successful_detail.json()
+            assert "total_tokens" not in successful_detail.json()
             route_detail = await client.get(
                 f"/api/v1/projects/{project_id}/requests/{invalid_route_request_id}",
                 headers=jwt_headers,
@@ -457,8 +460,6 @@ async def test_llm_mock_access_chat_stream_quota_and_upgrade(
                 "audit_result",
                 "audit_steps",
                 "error_details",
-                "result_summary",
-                "usage_metrics",
             } & set(route_detail.json())
             forbidden_global_logs = await client.get("/api/admin/v1/requests", headers=jwt_headers)
             assert forbidden_global_logs.status_code == 403

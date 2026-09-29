@@ -16,6 +16,7 @@ from sqlalchemy.sql.elements import ColumnElement
 
 from app.infrastructure.db.models import (
     GatewayRequest,
+    LlmRequestUsage,
     LogRetentionRun,
     Project,
     ProjectMember,
@@ -40,19 +41,14 @@ class RequestLogItem:
     project_id: UUID | None
     project_name: str | None
     service_code: str
-    model: str
     status: str
     audit_result: str
     audit_steps: dict[str, object]
-    prompt_tokens: int
-    completion_tokens: int
-    total_tokens: int
     latency_ms: int
     error_code: str | None
     error_message: str | None
     error_details: dict[str, object] | None
-    result_summary: dict[str, object] | None
-    usage_metrics: dict[str, object]
+    description: str | None
     created_at: datetime
 
 
@@ -146,12 +142,13 @@ class RequestLogService:
                     func.count(GatewayRequest.id).filter(GatewayRequest.status == "succeeded"),
                     func.count(GatewayRequest.id).filter(GatewayRequest.status == "failed"),
                     func.count(GatewayRequest.id).filter(GatewayRequest.status == "denied"),
-                    func.coalesce(func.sum(GatewayRequest.prompt_tokens), 0),
-                    func.coalesce(func.sum(GatewayRequest.completion_tokens), 0),
-                    func.coalesce(func.sum(GatewayRequest.total_tokens), 0),
+                    func.coalesce(func.sum(LlmRequestUsage.prompt_tokens), 0),
+                    func.coalesce(func.sum(LlmRequestUsage.completion_tokens), 0),
+                    func.coalesce(func.sum(LlmRequestUsage.total_tokens), 0),
                     func.coalesce(func.avg(GatewayRequest.latency_ms), 0),
                 )
                 .select_from(GatewayRequest)
+                .outerjoin(LlmRequestUsage, LlmRequestUsage.request_id == GatewayRequest.request_id)
                 .outerjoin(Project, Project.id == GatewayRequest.project_id)
                 .where(*filters)
             )
@@ -167,15 +164,16 @@ class RequestLogService:
             ) = aggregate.one()
             model_rows = await session.execute(
                 select(
-                    GatewayRequest.model,
+                    LlmRequestUsage.model,
                     func.count(GatewayRequest.id),
-                    func.coalesce(func.sum(GatewayRequest.total_tokens), 0),
+                    func.coalesce(func.sum(LlmRequestUsage.total_tokens), 0),
                 )
                 .select_from(GatewayRequest)
+                .join(LlmRequestUsage, LlmRequestUsage.request_id == GatewayRequest.request_id)
                 .outerjoin(Project, Project.id == GatewayRequest.project_id)
                 .where(*filters)
-                .group_by(GatewayRequest.model)
-                .order_by(func.sum(GatewayRequest.total_tokens).desc(), GatewayRequest.model)
+                .group_by(LlmRequestUsage.model)
+                .order_by(func.sum(LlmRequestUsage.total_tokens).desc(), LlmRequestUsage.model)
                 .limit(50)
             )
             daily_day = func.timezone("UTC", GatewayRequest.created_at).cast(Date).label("day")
@@ -183,9 +181,10 @@ class RequestLogService:
                 select(
                     daily_day,
                     func.count(GatewayRequest.id),
-                    func.coalesce(func.sum(GatewayRequest.total_tokens), 0),
+                    func.coalesce(func.sum(LlmRequestUsage.total_tokens), 0),
                 )
                 .select_from(GatewayRequest)
+                .outerjoin(LlmRequestUsage, LlmRequestUsage.request_id == GatewayRequest.request_id)
                 .outerjoin(Project, Project.id == GatewayRequest.project_id)
                 .where(*filters)
                 .group_by("day")
@@ -223,7 +222,6 @@ class RequestLogService:
         project_id: UUID | None = None,
         status: str | None = None,
         service_code: str | None = None,
-        model: str | None = None,
         request_id: str | None = None,
         cursor: str | None = None,
         limit: int = 50,
@@ -243,8 +241,6 @@ class RequestLogService:
                 filters.append(GatewayRequest.status == status)
             if service_code:
                 filters.append(GatewayRequest.service_code == service_code.strip())
-            if model:
-                filters.append(GatewayRequest.model.ilike(f"%{model.strip()}%"))
             if request_id:
                 filters.append(GatewayRequest.request_id == request_id.strip())
             total_count = await session.scalar(
@@ -278,19 +274,14 @@ class RequestLogService:
                     project_id=row.project_id,
                     project_name=project_name,
                     service_code=row.service_code,
-                    model=row.model,
                     status=row.status,
                     audit_result=row.audit_result,
                     audit_steps=row.audit_steps,
-                    prompt_tokens=row.prompt_tokens,
-                    completion_tokens=row.completion_tokens,
-                    total_tokens=row.total_tokens,
                     latency_ms=row.latency_ms,
                     error_code=row.error_code,
                     error_message=row.error_message,
                     error_details=row.error_details,
-                    result_summary=row.result_summary,
-                    usage_metrics=row.usage_metrics,
+                    description=row.description,
                     created_at=row.created_at,
                 )
                 for row, project_name in result_rows
@@ -329,19 +320,14 @@ class RequestLogService:
                 project_id=item.project_id,
                 project_name=project_name,
                 service_code=item.service_code,
-                model=item.model,
                 status=item.status,
                 audit_result=item.audit_result,
                 audit_steps=item.audit_steps,
-                prompt_tokens=item.prompt_tokens,
-                completion_tokens=item.completion_tokens,
-                total_tokens=item.total_tokens,
                 latency_ms=item.latency_ms,
                 error_code=item.error_code,
                 error_message=item.error_message,
                 error_details=item.error_details,
-                result_summary=item.result_summary,
-                usage_metrics=item.usage_metrics,
+                description=item.description,
                 created_at=item.created_at,
             )
 
