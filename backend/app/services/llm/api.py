@@ -261,10 +261,13 @@ async def chat_completions(
         return openai_error(401, "invalid_api_key", "API Key 无效、已撤销或已过期", request_id)
 
     logger.info(
-        "audit_stage stage=authentication result=allowed request_id=%s project_id=%s api_key_id=%s",
+        "audit_stage stage=authentication result=allowed request_id=%s project_id=%s "
+        "api_key_id=%s actor_user_id=%s actor_username=%s",
         request_id,
         key.project_id,
         key.id,
+        key.user_id,
+        key.username,
     )
 
     if payload.stream:

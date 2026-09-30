@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Annotated, Literal
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from pydantic import BaseModel, Field, model_validator
 
 from app.application.projects import (
@@ -15,8 +15,10 @@ from app.application.projects import (
     ProjectService,
     UserNotFoundError,
 )
-from app.container import get_current_user, get_project_service
+from app.container import get_current_user, get_project_service, get_request_recorder
 from app.infrastructure.db.models import Project, User
+from app.request_logging.application import GatewayRequestRecorder
+from app.request_logging.operations import record_project_operation
 
 router = APIRouter(prefix="/api/admin/v1/projects", tags=["Projects"])
 ProjectTagName = Annotated[str, Field(min_length=1, max_length=20)]
@@ -106,13 +108,19 @@ def map_project_error(error: RuntimeError) -> HTTPException:
 )
 async def create_project(
     payload: ProjectCreateRequest,
+    request: Request,
     current_user: Annotated[User, Depends(get_current_user)],
     project_service: Annotated[ProjectService, Depends(get_project_service)],
+    recorder: Annotated[GatewayRequestRecorder, Depends(get_request_recorder)],
 ) -> Project:
     """任何已登录用户都可以创建项目，创建者自动成为 owner。"""
-    return await project_service.create(
+    project = await project_service.create(
         payload.name.strip(), payload.description, payload.visibility, payload.tags, current_user
     )
+    await record_project_operation(
+        recorder, request, current_user, project.id, "project.create", "创建项目"
+    )
+    return project
 
 
 @router.get("", response_model=ProjectListResponse, summary="筛选和分页查询可访问项目")
@@ -159,11 +167,13 @@ async def get_project(
 async def update_project(
     project_id: UUID,
     payload: ProjectUpdateRequest,
+    request: Request,
     current_user: Annotated[User, Depends(get_current_user)],
     project_service: Annotated[ProjectService, Depends(get_project_service)],
+    recorder: Annotated[GatewayRequestRecorder, Depends(get_request_recorder)],
 ) -> Project:
     try:
-        return await project_service.update(
+        project = await project_service.update(
             project_id,
             current_user,
             payload.name.strip() if payload.name is not None else None,
@@ -174,6 +184,10 @@ async def update_project(
             tags=payload.tags,
             update_tags="tags" in payload.model_fields_set,
         )
+        await record_project_operation(
+            recorder, request, current_user, project_id, "project.update", "更新项目资料或状态"
+        )
+        return project
     except (ProjectNotFoundError, ProjectForbiddenError, ProjectConflictError) as error:
         raise map_project_error(error) from error
 
@@ -185,12 +199,17 @@ async def update_project(
 )
 async def delete_project(
     project_id: UUID,
+    request: Request,
     current_user: Annotated[User, Depends(get_current_user)],
     project_service: Annotated[ProjectService, Depends(get_project_service)],
+    recorder: Annotated[GatewayRequestRecorder, Depends(get_request_recorder)],
 ) -> Response:
     """永久删除项目及其标签、成员关系；仅项目 owner 可以删除。"""
     try:
         await project_service.delete(project_id, current_user)
+        await record_project_operation(
+            recorder, request, current_user, project_id, "project.delete", "删除项目"
+        )
     except (ProjectNotFoundError, ProjectForbiddenError) as error:
         raise map_project_error(error) from error
     return Response(status_code=status.HTTP_204_NO_CONTENT)
@@ -221,17 +240,28 @@ async def list_members(
 async def add_member(
     project_id: UUID,
     payload: ProjectMemberRequest,
+    request: Request,
     current_user: Annotated[User, Depends(get_current_user)],
     project_service: Annotated[ProjectService, Depends(get_project_service)],
+    recorder: Annotated[GatewayRequestRecorder, Depends(get_request_recorder)],
 ) -> ProjectMemberInfo:
     try:
-        return await project_service.add_member(
+        member = await project_service.add_member(
             project_id,
             current_user,
             payload.role,
             member_user_id=payload.user_id,
             member_username=payload.username,
         )
+        await record_project_operation(
+            recorder,
+            request,
+            current_user,
+            project_id,
+            "member.add",
+            f"添加项目成员 user_id={member.user_id} role={member.role}",
+        )
+        return member
     except (
         ProjectNotFoundError,
         ProjectForbiddenError,
@@ -249,15 +279,27 @@ async def add_member(
 async def remove_member(
     project_id: UUID,
     member_user_id: UUID,
+    request: Request,
     current_user: Annotated[User, Depends(get_current_user)],
     project_service: Annotated[ProjectService, Depends(get_project_service)],
+    recorder: Annotated[GatewayRequestRecorder, Depends(get_request_recorder)],
 ) -> Response:
     try:
-        await project_service.remove_member(project_id, current_user, member_user_id)
+        member = await project_service.remove_member(project_id, current_user, member_user_id)
+        await record_project_operation(
+            recorder,
+            request,
+            current_user,
+            project_id,
+            "member.remove",
+            f"移除项目成员 username={member.username} user_id={member_user_id}；"
+            "其个人 API Key 已撤销",
+        )
     except (
         ProjectNotFoundError,
         ProjectForbiddenError,
         ProjectConflictError,
+        UserNotFoundError,
     ) as error:
         raise map_project_error(error) from error
     return Response(status_code=status.HTTP_204_NO_CONTENT)
@@ -272,13 +314,26 @@ async def update_member_role(
     project_id: UUID,
     member_user_id: UUID,
     payload: ProjectMemberRoleUpdateRequest,
+    request: Request,
     current_user: Annotated[User, Depends(get_current_user)],
     project_service: Annotated[ProjectService, Depends(get_project_service)],
+    recorder: Annotated[GatewayRequestRecorder, Depends(get_request_recorder)],
 ) -> ProjectMemberInfo:
     try:
-        return await project_service.update_member_role(
+        member = await project_service.update_member_role(
             project_id, current_user, member_user_id, payload.role
         )
+        await record_project_operation(
+            recorder,
+            request,
+            current_user,
+            project_id,
+            "member.role.update",
+            f"修改项目成员权限 username={member.username} "
+            f"user_id={member_user_id} role={member.role}"
+            + ("；其个人 API Key 已撤销" if member.role == "viewer" else ""),
+        )
+        return member
     except (
         ProjectNotFoundError,
         ProjectForbiddenError,

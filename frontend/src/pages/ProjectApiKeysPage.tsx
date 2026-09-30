@@ -8,7 +8,7 @@ type ExpiryOption = "never" | "30" | "90" | "365";
 function errorMessage(reason: unknown): string {
   if (reason instanceof ApiClientError) {
     if (reason.status === 503) return "API Key 功能尚未启用，请联系管理员配置 API_KEY_SECRET_KEY。";
-    if (reason.status === 403) return "只有项目 owner 和 editor 可以查看 API Key 元数据。";
+    if (reason.status === 403) return "只有项目 owner 和 editor 可以管理自己的 API Key。";
     return reason.message;
   }
   return "请求失败，请检查网络后重试。";
@@ -41,7 +41,7 @@ export function ProjectApiKeysPage() {
     return members.find((member) => member.user_id === user.id)?.role ?? null;
   }, [members, project, user]);
   const canView = role === "owner" || role === "editor";
-  const canManage = role === "owner";
+  const canManage = role === "owner" || role === "editor";
 
   const load = useCallback(async () => {
     if (!token || !projectId) return;
@@ -149,7 +149,7 @@ export function ProjectApiKeysPage() {
         <div>
           <p className="page-kicker">项目凭证</p>
           <h2 id="api-keys-title">API Key</h2>
-          <p className="page-description">{project?.name ?? "项目"} · 每把 Key 都授权整个项目。</p>
+          <p className="page-description">{project?.name ?? "项目"} · 每把 Key 都授权整个项目，并只归属于创建者本人。</p>
         </div>
         <button className="secondary-button" onClick={() => void load()} type="button">刷新</button>
       </div>
@@ -165,8 +165,8 @@ export function ProjectApiKeysPage() {
           <section className="project-detail-panel api-key-panel" aria-labelledby="api-key-list-title">
             <div className="api-key-heading">
               <div>
-                <h3 id="api-key-list-title">项目密钥</h3>
-                <p>owner 和 editor 都可随时查看完整密钥；请仅将其提供给可信任的调用方。</p>
+                <h3 id="api-key-list-title">我的项目密钥</h3>
+                <p>此处只显示你创建的 Key。每把 Key 都授权整个项目；成员降为 viewer 或离开项目后，其 Key 会自动撤销。</p>
               </div>
               <span className="api-key-role-badge">{role}</span>
             </div>
@@ -224,7 +224,7 @@ export function ProjectApiKeysPage() {
                           {copiedKeyId === key.id ? "已复制" : "复制 Key"}
                         </button>
                       )}
-                      {canManage && key.status === "active" && (
+                          {canManage && key.status === "active" && (
                         <button
                           className="danger-button"
                           disabled={revokingId === key.id}
@@ -255,7 +255,7 @@ export function ProjectApiKeysPage() {
               <span className="api-key-modal-icon" aria-hidden="true">!</span>
               <div>
                 <h3 id="api-key-secret-title">API Key 已创建</h3>
-                <p>owner 和 editor 可随时在项目 Key 列表中查看完整密钥。</p>
+                <p>只有你本人可以在项目 Key 列表中查看这把完整密钥。</p>
               </div>
             </div>
             <code className="api-key-secret-value">{secret}</code>

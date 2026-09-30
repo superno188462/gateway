@@ -19,6 +19,8 @@ from app.domain.service_catalog import ServiceCatalogItem
 from app.infrastructure.db.engine import SqlAlchemyReadinessProbe, create_database_engine
 from app.infrastructure.db.models import User
 from app.request_logging.application import GatewayRequestRecorder
+from app.resources.application import ResourceService
+from app.resources.infrastructure import PostgresResourceRepository
 from app.security import JwtService, PasswordService
 from app.service_management.application import ProjectServiceManagement
 from app.services.llm.application import LlmGatewayService
@@ -26,6 +28,8 @@ from app.services.llm.catalog import LLM_SERVICE
 from app.services.llm.configuration import LlmConfigurationService
 from app.services.llm.providers.openai_compatible import ConfiguredLlmProvider
 from app.services.llm.secrets import ProviderSecretCipher
+from app.services.project_context.application import ProjectContextService
+from app.services.project_context.catalog import PROJECT_CONTEXT_SERVICE
 from app.technical_logging import TechnicalLogService
 from app.usage.application import RequestLogService
 
@@ -47,6 +51,8 @@ class AppContainer:
     admin_bootstrap: AdminBootstrapService | None
     auth_service: AuthService | None
     project_service: ProjectService | None
+    resource_service: ResourceService | None
+    project_context_service: ProjectContextService | None
     api_key_service: ApiKeyService | None
     service_management: ProjectServiceManagement | None
     llm_gateway_service: LlmGatewayService | None
@@ -55,6 +61,7 @@ class AppContainer:
     request_recorder: GatewayRequestRecorder | None
     technical_log_service: TechnicalLogService
     log_retention_task: asyncio.Task[None] | None
+    context_cleanup_task: asyncio.Task[None] | None
     http_client: httpx.AsyncClient | None
 
     @classmethod
@@ -78,6 +85,8 @@ class AppContainer:
                 admin_bootstrap=None,
                 auth_service=None,
                 project_service=None,
+                resource_service=None,
+                project_context_service=None,
                 api_key_service=None,
                 service_management=None,
                 llm_gateway_service=None,
@@ -86,6 +95,7 @@ class AppContainer:
                 request_recorder=None,
                 technical_log_service=TechnicalLogService(settings.log_file_path),
                 log_retention_task=None,
+                context_cleanup_task=None,
                 http_client=None,
             )
 
@@ -120,7 +130,10 @@ class AppContainer:
                 if llm_configuration_service is not None
                 else ("mock-chat",)
             )
-            return (ServiceCatalogItem(LLM_SERVICE.code, LLM_SERVICE.name, models),)
+            return (
+                ServiceCatalogItem(LLM_SERVICE.code, LLM_SERVICE.name, models),
+                PROJECT_CONTEXT_SERVICE,
+            )
 
         return cls(
             settings=settings,
@@ -142,6 +155,8 @@ class AppContainer:
                 {"mock-llm-v1": settings.default_llm_monthly_token_limit},
             ),
             project_service=ProjectService(session_factory),
+            resource_service=ResourceService(PostgresResourceRepository(session_factory)),
+            project_context_service=ProjectContextService(session_factory),
             api_key_service=(
                 ApiKeyService(session_factory, settings.api_key_secret_key.get_secret_value())
                 if settings.api_key_secret_key is not None
@@ -162,6 +177,7 @@ class AppContainer:
             request_recorder=request_recorder,
             technical_log_service=TechnicalLogService(settings.log_file_path),
             log_retention_task=None,
+            context_cleanup_task=None,
             http_client=http_client,
         )
 
@@ -174,6 +190,11 @@ class AppContainer:
                 self.request_log_service.run_periodically(),
                 name="gateway-request-log-retention",
             )
+        if self.project_context_service is not None:
+            self.context_cleanup_task = asyncio.create_task(
+                self.project_context_service.run_cleanup_periodically(),
+                name="gateway-context-memory-cleanup",
+            )
 
     async def close(self) -> None:
         """释放容器拥有的异步资源。"""
@@ -184,6 +205,13 @@ class AppContainer:
             except asyncio.CancelledError:
                 pass
             self.log_retention_task = None
+        if self.context_cleanup_task is not None:
+            self.context_cleanup_task.cancel()
+            try:
+                await self.context_cleanup_task
+            except asyncio.CancelledError:
+                pass
+            self.context_cleanup_task = None
         if self.database_engine is not None:
             await self.database_engine.dispose()
         if self.http_client is not None:
@@ -227,6 +255,22 @@ def get_project_service(request: Request) -> ProjectService:
     service = get_container(request).project_service
     if service is None:
         raise RuntimeError("项目服务未注册")
+    return service
+
+
+def get_resource_service(request: Request) -> ResourceService:
+    """注入项目模板与记忆资源服务。"""
+    service = get_container(request).resource_service
+    if service is None:
+        raise RuntimeError("项目资源服务未注册")
+    return service
+
+
+def get_project_context_service(request: Request) -> ProjectContextService:
+    """注入项目上下文服务单例。"""
+    service = get_container(request).project_context_service
+    if service is None:
+        raise RuntimeError("项目上下文服务未注册")
     return service
 
 

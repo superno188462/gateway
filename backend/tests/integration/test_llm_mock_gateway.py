@@ -1,6 +1,7 @@
 """A4 LLM Mock 闭环集成测试；仅清理本测试创建的独立数据。"""
 
 import os
+import logging
 import secrets
 from uuid import UUID, uuid4
 
@@ -34,6 +35,7 @@ def database_url() -> str:
 async def test_llm_mock_access_chat_stream_quota_and_upgrade(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
+    caplog.set_level(logging.INFO, logger="gateway.service.llm")
     engine = create_async_engine(database_url())
     factory = async_sessionmaker(engine, expire_on_commit=False)
     owner_id, project_id, second_project_id = uuid4(), uuid4(), uuid4()
@@ -328,6 +330,12 @@ async def test_llm_mock_access_chat_stream_quota_and_upgrade(
                 and '"project_monthly_limit": 100000' in record.getMessage()
                 for record in caplog.records
             )
+            assert any(
+                "stage=authentication result=allowed" in record.getMessage()
+                and f"actor_user_id={owner_id}" in record.getMessage()
+                and f"actor_username={owner.username}" in record.getMessage()
+                for record in caplog.records
+            )
 
             upgraded = await client.patch(
                 f"/api/admin/v1/projects/{project_id}/services/mock-llm-v1",
@@ -364,8 +372,14 @@ async def test_llm_mock_access_chat_stream_quota_and_upgrade(
             )
             assert any(log.error_code == "service_not_enabled" for log in logs)
             assert any(log.error_code == "project_quota_exceeded" for log in logs)
-            assert all(log.api_key_id == created.info.id for log in logs)
+            assert all(
+                log.api_key_id == created.info.id
+                for log in logs
+                if log.event_type == "service_call"
+            )
             successful_log = next(log for log in logs if log.request_id == successful_request_id)
+            assert successful_log.actor_user_id == owner_id
+            assert successful_log.actor_username == owner.username
             denied_log = next(log for log in logs if log.error_code == "service_not_enabled")
             assert denied_log.audit_result == "denied"
             assert denied_log.error_message == "项目尚未申请 LLM Mock 服务"
@@ -448,6 +462,8 @@ async def test_llm_mock_access_chat_stream_quota_and_upgrade(
             )
             assert successful_detail.status_code == 200
             assert successful_detail.json()["trace_id"] == successful_request_id
+            assert successful_detail.json()["actor_user_id"] == str(owner_id)
+            assert successful_detail.json()["actor_username"] == owner.username
             assert not {
                 "audit_result",
                 "audit_steps",

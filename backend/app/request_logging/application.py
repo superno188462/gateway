@@ -2,7 +2,7 @@
 
 from datetime import UTC, datetime
 from typing import Literal
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -24,6 +24,39 @@ class GatewayRequestRecorder:
     def __init__(self, session_factory: async_sessionmaker[AsyncSession]) -> None:
         self._session_factory = session_factory
 
+    async def record_project_operation(
+        self,
+        *,
+        trace_id: str,
+        project_id: UUID,
+        actor_user_id: UUID,
+        actor_username: str,
+        operation: str,
+        description: str,
+        api_key_id: UUID | None = None,
+        latency_ms: int = 0,
+    ) -> None:
+        """Persist a successful project-management operation without storing content."""
+        async with self._session_factory.begin() as session:
+            session.add(
+                GatewayRequest(
+                    request_id=f"op_{uuid4().hex}",
+                    trace_id=trace_id,
+                    event_type="project_operation",
+                    actor_user_id=actor_user_id,
+                    actor_username=actor_username,
+                    project_id=project_id,
+                    api_key_id=api_key_id,
+                    service_code="project",
+                    status="succeeded",
+                    audit_result="allowed",
+                    audit_steps={"operation": {"result": "succeeded", "name": operation}},
+                    description=description[:1000],
+                    latency_ms=latency_ms,
+                    finished_at=datetime.now(UTC),
+                )
+            )
+
     async def start(
         self,
         *,
@@ -32,6 +65,8 @@ class GatewayRequestRecorder:
         api_key_id: UUID,
         service_code: str,
         description: str | None = None,
+        actor_user_id: UUID | None = None,
+        actor_username: str | None = None,
     ) -> None:
         """认证项目 Key 后、检查额度和调用服务前，先持久化请求与 Trace ID。"""
         async with self._session_factory.begin() as session:
@@ -42,6 +77,8 @@ class GatewayRequestRecorder:
                 api_key_id=api_key_id,
                 service_code=service_code,
                 description=description,
+                actor_user_id=actor_user_id,
+                actor_username=actor_username,
             )
 
     async def start_in_session(
@@ -53,12 +90,16 @@ class GatewayRequestRecorder:
         api_key_id: UUID,
         service_code: str,
         description: str | None = None,
+        actor_user_id: UUID | None = None,
+        actor_username: str | None = None,
     ) -> None:
         """在调用方事务中创建请求记录，以便与服务专属元数据一起提交。"""
         session.add(
             GatewayRequest(
                 request_id=request_id,
                 trace_id=request_id,
+                actor_user_id=actor_user_id,
+                actor_username=actor_username,
                 project_id=project_id,
                 api_key_id=api_key_id,
                 service_code=service_code,

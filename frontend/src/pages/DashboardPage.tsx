@@ -71,7 +71,7 @@ export function DashboardPage() {
 
   async function runRetention() {
     if (!token || runningRetention) return;
-    if (!window.confirm("将删除所有早于 30 天且不属于全系统最新 10,000 条的调用日志，确定继续吗？")) return;
+    if (!window.confirm("将删除所有早于 30 天且不属于全系统最新 10,000 条的操作日志，确定继续吗？")) return;
     setRunningRetention(true);
     setError(null);
     setNotice(null);

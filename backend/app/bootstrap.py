@@ -16,11 +16,14 @@ from app.api.projects import router as projects_router
 from app.config import Settings
 from app.container import AppContainer
 from app.domain.health import ReadinessProbe
+from app.resources.api import router as project_resources_router
 from app.service_management.api import account_router as account_services_router
 from app.service_management.api import router as llm_services_router
 from app.services.llm.admin_api import public_router as llm_models_router
 from app.services.llm.admin_api import router as llm_provider_admin_router
 from app.services.llm.api import router as llm_gateway_router
+from app.services.project_context.api import console_router as project_context_console_router
+from app.services.project_context.api import router as project_context_router
 from app.technical_logging import configure_file_logging, reset_trace_id, set_trace_id
 from app.technical_logging_api import router as technical_logging_router
 from app.usage.api import admin_router as request_log_admin_router
@@ -104,10 +107,13 @@ def create_app(
     app.include_router(health_router)
     app.include_router(auth_router)
     app.include_router(projects_router)
+    app.include_router(project_resources_router)
     app.include_router(api_keys_router)
     app.include_router(llm_services_router)
     app.include_router(account_services_router)
     app.include_router(llm_gateway_router)
+    app.include_router(project_context_router)
+    app.include_router(project_context_console_router)
     app.include_router(llm_models_router)
     app.include_router(llm_provider_admin_router)
     app.include_router(request_log_router)

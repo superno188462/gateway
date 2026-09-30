@@ -44,6 +44,7 @@ export function ProjectDetailPage() {
   const [isLoadingServices, setIsLoadingServices] = useState(true);
   const [savingServiceCode, setSavingServiceCode] = useState<string | null>(null);
   const [serviceAllocationInputs, setServiceAllocationInputs] = useState<Record<string, string>>({});
+  const [collapsedServiceCodes, setCollapsedServiceCodes] = useState<Set<string>>(() => new Set());
   const [serviceError, setServiceError] = useState<string | null>(null);
   const [serviceSuccess, setServiceSuccess] = useState<string | null>(null);
 
@@ -247,6 +248,21 @@ export function ProjectDetailPage() {
     }
   }
 
+  async function applyContextService() {
+    if (!token || !projectId || projectServices.some((item) => item.service_code === "project-context-v1")) return;
+    setServiceError(null);
+    setServiceSuccess(null);
+    try {
+      const subscription = await apiClient.applyProjectService(token, projectId, {
+        service_code: "project-context-v1",
+      });
+      setProjectServices((current) => [...current, subscription]);
+      setServiceSuccess("项目上下文服务已开通。");
+    } catch (reason) {
+      setServiceError(errorMessage(reason, "项目上下文服务申请失败，请重试。"));
+    }
+  }
+
   const canManage = project?.owner_id === user?.id;
   const canViewApiKeys = canManage || members.some(
     (member) => member.user_id === user?.id && member.role === "editor",
@@ -293,17 +309,34 @@ export function ProjectDetailPage() {
           {canViewApiKeys && (
             <div className="project-detail-shortcuts">
               <Link className="secondary-button project-key-link" to={`/projects/${project.id}/keys`}>
-                {canManage ? "管理 API Key" : "查看 API Key"} <span aria-hidden="true">→</span>
+                我的 API Key <span aria-hidden="true">→</span>
               </Link>
-              <span>owner 可创建和撤销；editor 可查看密钥信息。</span>
+              <span>owner 和 editor 均可创建、查看和撤销本人创建的 Key。</span>
             </div>
           )}
           <div className="project-detail-shortcuts">
             <Link className="secondary-button project-key-link" to={`/projects/${project.id}/logs`}>
-              查看调用日志 <span aria-hidden="true">→</span>
+              查看操作日志 <span aria-hidden="true">→</span>
             </Link>
             <span>仅包含该项目的调用状态、用量和错误分类。</span>
           </div>
+          {canViewApiKeys && (
+            <div className="project-detail-shortcuts">
+              <Link className="secondary-button project-key-link" to={`/services/context/${project.id}/templates`}>
+                管理项目上下文 <span aria-hidden="true">→</span>
+              </Link>
+              <span>提示词模板、短期/长期记忆与用户画像都按项目隔离。</span>
+            </div>
+          )}
+          {canManage && !projectServices.some((item) => item.service_code === "project-context-v1") && (
+            <section className="project-detail-panel service-allocation-panel">
+              <div className="service-allocation-heading">
+                <div><h3>项目上下文服务</h3><p>为接入应用启用提示词模板、短期记忆、长期记忆和用户画像 API；不占用 AI token 配额。</p></div>
+                <button className="primary-button" onClick={() => void applyContextService()} type="button">申请并开通</button>
+              </div>
+              {serviceError && <p className="form-error" role="alert">{serviceError}</p>}
+            </section>
+          )}
           {canManage && (
             <section className="project-detail-panel service-allocation-panel" aria-labelledby="project-service-title">
               <div className="service-allocation-heading">
@@ -336,45 +369,62 @@ export function ProjectDetailPage() {
                     const allocation = projectServices.find((item) => item.service_code === quota.service_code);
                     const maximum = quota.available_tokens + (allocation?.monthly_token_limit ?? 0);
                     const isSaving = savingServiceCode === quota.service_code;
+                    const isExpanded = !collapsedServiceCodes.has(quota.service_code);
+                    const controlsId = `project-service-controls-${quota.service_code}`;
                     return (
                       <div className="project-service-row" key={quota.service_code}>
                         <div className="project-service-summary">
-                        <strong>{quota.name}</strong>
+                          <button
+                            aria-controls={controlsId}
+                            aria-expanded={isExpanded}
+                            className="secondary-button project-service-toggle"
+                            onClick={() => setCollapsedServiceCodes((current) => {
+                              const next = new Set(current);
+                              if (next.has(quota.service_code)) next.delete(quota.service_code);
+                              else next.add(quota.service_code);
+                              return next;
+                            })}
+                            type="button"
+                          >
+                            {quota.name}<span aria-hidden="true">{isExpanded ? "⌄" : "›"}</span>
+                          </button>
                           <span>
                             {allocation ? "已开通" : "未申请"} · {quota.monthly_token_limit === 0
                               ? "个人额度为 0，需联系管理员开通"
                               : `个人可分配 ${new Intl.NumberFormat("zh-CN").format(maximum)} tokens`}
                           </span>
                         </div>
-                        <label className="project-service-limit">
-                          <span>项目月上限</span>
-                          <input
-                            aria-label={`${quota.name} 项目月 token 上限`}
-                            disabled={!allocation && quota.available_tokens < 1}
-                            inputMode="numeric"
-                            min={1}
-                            onChange={(event) => setServiceAllocationInputs((current) => ({
-                              ...current,
-                              [quota.service_code]: event.target.value,
-                            }))}
-                            placeholder="输入 token 数"
-                            type="number"
-                            value={serviceAllocationInputs[quota.service_code] ?? ""}
-                          />
-                        </label>
-                        <button
-                          className="primary-button"
-                          disabled={isSaving || (!allocation && quota.available_tokens < 1)}
-                          onClick={() => void saveProjectService(quota)}
-                          type="button"
-                        >
-                          {isSaving ? "保存中…" : allocation ? "调整额度" : "申请服务"}
-                        </button>
-                        {allocation && (
-                          <small className="project-service-usage">
-                            本月已用 {new Intl.NumberFormat("zh-CN").format(allocation.tokens_used)} · 处理中预留 {new Intl.NumberFormat("zh-CN").format(allocation.tokens_reserved)} tokens
-                          </small>
-                        )}
+                        <div className="project-service-controls" hidden={!isExpanded} id={controlsId}>
+                            <label className="project-service-limit">
+                              <span>项目月上限</span>
+                              <input
+                                aria-label={`${quota.name} 项目月 token 上限`}
+                                disabled={!allocation && quota.available_tokens < 1}
+                                inputMode="numeric"
+                                min={1}
+                                onChange={(event) => setServiceAllocationInputs((current) => ({
+                                  ...current,
+                                  [quota.service_code]: event.target.value,
+                                }))}
+                                placeholder="输入 token 数"
+                                type="number"
+                                value={serviceAllocationInputs[quota.service_code] ?? ""}
+                              />
+                            </label>
+                            <button
+                              className="primary-button"
+                              disabled={isSaving || (!allocation && quota.available_tokens < 1)}
+                              onClick={() => void saveProjectService(quota)}
+                              type="button"
+                            >
+                              {isSaving ? "保存中…" : allocation ? "调整额度" : "申请服务"}
+                            </button>
+                            {allocation && (
+                              <small className="project-service-usage">
+                                本月已用 {new Intl.NumberFormat("zh-CN").format(allocation.tokens_used)} · 处理中预留 {new Intl.NumberFormat("zh-CN").format(allocation.tokens_reserved)} tokens
+                              </small>
+                            )}
+                        </div>
                       </div>
                     );
                   })}

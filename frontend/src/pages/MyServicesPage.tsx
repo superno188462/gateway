@@ -189,7 +189,7 @@ export function MyServicesPage() {
                     </div>
                     <p>{service.service_code} · {service.service_code === "mock-llm-v1" ? "内置 mock-chat；其他模型名请按供应商文档填写，网关会原样转发" : `模型：${service.models.join("、") || "暂无"}`}</p>
                   </div>
-                  <Link className="secondary-button" to="/projects">管理项目</Link>
+                  <Link className="secondary-button" to={`/services/${service.service_code === "project-context-v1" ? "context" : "llm"}/projects`}>管理项目</Link>
                 </div>
 
                 <div className="service-quota-metrics">

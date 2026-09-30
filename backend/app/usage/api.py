@@ -1,4 +1,4 @@
-"""用户可见范围内的调用日志查询和管理员保留任务端点。"""
+"""用户可见范围内的项目操作日志查询和管理员保留任务端点。"""
 
 from dataclasses import asdict
 from datetime import UTC, date, datetime, timedelta
@@ -29,7 +29,11 @@ class RequestLogResponse(BaseModel):
 
     request_id: str
     trace_id: str
+    event_type: Literal["service_call", "project_operation"]
+    actor_user_id: UUID | None
+    actor_username: str | None
     project_id: UUID | None
+    api_key_id: UUID | None
     project_name: str | None
     service_code: str
     status: str
@@ -44,7 +48,11 @@ class RequestLogResponse(BaseModel):
         return cls(
             request_id=item.request_id,
             trace_id=item.trace_id,
+            event_type=item.event_type,
+            actor_user_id=item.actor_user_id,
+            actor_username=item.actor_username,
             project_id=item.project_id,
+            api_key_id=item.api_key_id,
             project_name=item.project_name,
             service_code=item.service_code,
             status=item.status,
@@ -172,9 +180,72 @@ async def usage_summary(
 
 
 @router.get(
+    "/requests",
+    response_model=RequestLogPageResponse,
+    summary="查询当前用户可访问项目的操作日志",
+)
+async def list_visible_requests(
+    user: Annotated[User, Depends(get_current_user)],
+    service: Annotated[RequestLogService, Depends(get_request_log_service)],
+    start_at: Annotated[
+        datetime | None, Query(description="UTC 开始时间，包含。默认最近 7 天。")
+    ] = None,
+    end_at: Annotated[
+        datetime | None, Query(description="UTC 结束时间，不包含。默认当前时间。")
+    ] = None,
+    project_id: Annotated[
+        UUID | None, Query(description="可选项目筛选；只能查询当前用户有权限查看的项目。")
+    ] = None,
+    log_status: Annotated[
+        Literal["received", "succeeded", "failed", "denied"] | None, Query(alias="status")
+    ] = None,
+    service_code: Annotated[str | None, Query(max_length=50)] = None,
+    request_id: Annotated[str | None, Query(max_length=64)] = None,
+    cursor: Annotated[str | None, Query(max_length=512)] = None,
+    page_number: Annotated[int, Query(alias="page", ge=1)] = 1,
+    page_size: Annotated[int, Query(ge=1, le=100)] = 50,
+) -> RequestLogPageResponse:
+    """查询当前用户可见项目的日志；项目可见范围由应用服务强制执行。"""
+    start, end = _resolve_window(start_at, end_at)
+    try:
+        page = await service.list_requests(
+            user,
+            start_at=start,
+            end_at=end,
+            project_id=project_id,
+            status=log_status,
+            service_code=service_code,
+            request_id=request_id,
+            cursor=cursor,
+            limit=page_size,
+            page=page_number,
+        )
+        return RequestLogPageResponse.from_page(page)
+    except RuntimeError as error:
+        raise _raise_log_error(error) from error
+
+
+@router.get(
+    "/requests/{request_id}",
+    response_model=RequestLogResponse,
+    summary="查询当前用户可访问项目中的单条操作日志",
+)
+async def get_visible_request(
+    request_id: str,
+    user: Annotated[User, Depends(get_current_user)],
+    service: Annotated[RequestLogService, Depends(get_request_log_service)],
+) -> RequestLogResponse:
+    """Return one log only if its project is visible to the current user."""
+    try:
+        return RequestLogResponse.from_item(await service.get_request(user, request_id))
+    except RuntimeError as error:
+        raise _raise_log_error(error) from error
+
+
+@router.get(
     "/projects/{project_id}/requests",
     response_model=RequestLogPageResponse,
-    summary="按页码查询项目调用日志",
+    summary="按页码查询项目操作日志",
 )
 async def list_requests(
     user: Annotated[User, Depends(get_current_user)],
@@ -199,7 +270,7 @@ async def list_requests(
     page_size: Annotated[int, Query(ge=1, le=100, description="每页条数，最大 100。")] = 50,
     limit: Annotated[int | None, Query(ge=1, le=100, deprecated=True)] = None,
 ) -> RequestLogPageResponse:
-    """只有拥有项目查看权限的用户才能查询该项目日志。"""
+    """只有拥有项目查看权限的用户才能查询该项目操作日志。"""
     start, end = _resolve_window(start_at, end_at)
     try:
         request_page = await service.list_requests(
@@ -222,7 +293,7 @@ async def list_requests(
 @router.get(
     "/projects/{project_id}/requests/{request_id}",
     response_model=RequestLogResponse,
-    summary="查询单条调用日志",
+    summary="查询单条操作日志",
 )
 async def get_request(
     project_id: UUID,
@@ -242,7 +313,7 @@ async def get_request(
 @admin_router.get(
     "",
     response_model=RequestLogPageResponse,
-    summary="管理员查询全局调用日志",
+    summary="管理员查询全局操作日志",
 )
 async def list_all_requests(
     admin: Annotated[User, Depends(get_current_admin)],
@@ -265,7 +336,7 @@ async def list_all_requests(
     page_size: Annotated[int, Query(ge=1, le=100, description="每页条数，最大 100。")] = 50,
     limit: Annotated[int | None, Query(ge=1, le=100, deprecated=True)] = None,
 ) -> RequestLogPageResponse:
-    """仅管理员可查全局调用日志；所有筛选条件均由后端执行。"""
+    """仅管理员可查全局操作日志；所有筛选条件均由后端执行。"""
     start, end = _resolve_window(start_at, end_at)
     try:
         request_page = await service.list_requests(
@@ -288,7 +359,7 @@ async def list_all_requests(
 @admin_router.get(
     "/logs/{request_id}",
     response_model=RequestLogResponse,
-    summary="管理员查询单条调用日志",
+    summary="管理员查询单条操作日志",
 )
 async def get_any_request(
     request_id: str,

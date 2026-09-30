@@ -3,18 +3,26 @@
 from typing import Annotated, Literal
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
 
-from app.container import get_current_admin, get_current_user, get_service_management
+from app.container import (
+    get_current_admin,
+    get_current_user,
+    get_request_recorder,
+    get_service_management,
+)
 from app.domain.service_catalog import ServiceCatalogItem
 from app.infrastructure.db.models import User
+from app.request_logging.application import GatewayRequestRecorder
+from app.request_logging.operations import record_project_operation
 from app.service_management.application import (
     ProjectServiceInfo,
     ProjectServiceManagement,
     ServiceAccessConflictError,
     ServiceAccessForbiddenError,
     ServiceAccessNotFoundError,
+    ServiceProjectInfo,
     UserQuotaTarget,
     UserServiceQuotaExceededError,
     UserServiceQuotaInfo,
@@ -29,6 +37,9 @@ class ServiceCatalogResponse(BaseModel):
     code: str = Field(description="稳定服务代码。")
     name: str = Field(description="服务展示名称。")
     models: list[str] = Field(description="此服务包含的模型标识。")
+    quota_unit: Literal["tokens"] | None = Field(
+        description="AI 推理服务的计量单位；null 表示数据服务不占用 AI 推理额度。"
+    )
 
     @classmethod
     def from_item(cls, item: ServiceCatalogItem) -> "ServiceCatalogResponse":
@@ -36,6 +47,7 @@ class ServiceCatalogResponse(BaseModel):
             code=item.code,
             name=item.name,
             models=list(item.models),
+            quota_unit=item.quota_unit,
         )
 
 
@@ -44,7 +56,9 @@ class ProjectServiceResponse(BaseModel):
 
     project_id: UUID = Field(description="订阅所属项目；调用方无需把该 ID 传给模型网关。")
     service_code: str = Field(description="服务目录代码。")
-    monthly_token_limit: int = Field(description="每月 token 上限。")
+    monthly_token_limit: int | None = Field(
+        description="AI 服务的每月 token 上限；数据服务为 null。"
+    )
     status: Literal["active", "suspended"] = Field(description="服务订阅状态。")
     period_start: str = Field(description="当前用量周期起始日，UTC 月初。")
     tokens_used: int = Field(description="本周期已确认消耗。")
@@ -63,10 +77,50 @@ class ProjectServiceResponse(BaseModel):
         )
 
 
+class ServiceProjectResponse(BaseModel):
+    """当前用户可访问且已开通指定服务的项目。"""
+
+    id: UUID
+    name: str
+    description: str | None
+    visibility: Literal["public", "private"]
+    owner_id: UUID
+    service_code: str
+    monthly_token_limit: int | None
+    service_status: Literal["active", "suspended"]
+    tokens_used: int
+    tokens_reserved: int
+
+    @classmethod
+    def from_info(cls, item: ServiceProjectInfo) -> "ServiceProjectResponse":
+        project = item.project
+        return cls(
+            id=project.id,
+            name=project.name,
+            description=project.description,
+            visibility=project.visibility,
+            owner_id=project.owner_id,
+            service_code=item.service_code,
+            monthly_token_limit=item.monthly_token_limit,
+            service_status=item.status,
+            tokens_used=item.tokens_used,
+            tokens_reserved=item.tokens_reserved,
+        )
+
+
+class ServiceProjectPageResponse(BaseModel):
+    items: list[ServiceProjectResponse]
+    total: int
+    offset: int
+    limit: int
+
+
 class ServiceApplicationRequest(BaseModel):
     service_code: str = Field(description="要申请的服务目录代码。")
-    monthly_token_limit: int = Field(
-        ge=1, description="分配给本项目的月度 token 上限；不能超过 owner 的个人可分配额度。"
+    monthly_token_limit: int | None = Field(
+        default=None,
+        ge=1,
+        description="AI 推理服务的项目月度 token 上限；数据服务不提供此字段。",
     )
 
 
@@ -237,6 +291,33 @@ async def list_my_services(
 
 
 @router.get(
+    "/services/{service_code}/projects",
+    response_model=ServiceProjectPageResponse,
+    summary="列出已开通指定服务的可访问项目",
+)
+async def list_projects_for_service(
+    service_code: str,
+    current_user: Annotated[User, Depends(get_current_user)],
+    service: Annotated[ProjectServiceManagement, Depends(get_service_management)],
+    offset: Annotated[int, Query(ge=0)] = 0,
+    limit: Annotated[int, Query(ge=1, le=100)] = 20,
+) -> ServiceProjectPageResponse:
+    """返回当前用户可查看且已开通指定服务的运行中项目，管理员可查看全部。"""
+    try:
+        items, total = await service.list_projects_for_service(
+            service_code, current_user, offset, limit
+        )
+    except ServiceAccessNotFoundError as error:
+        raise map_error(error) from error
+    return ServiceProjectPageResponse(
+        items=[ServiceProjectResponse.from_info(item) for item in items],
+        total=total,
+        offset=offset,
+        limit=limit,
+    )
+
+
+@router.get(
     "/projects/{project_id}/services",
     response_model=list[ProjectServiceResponse],
     summary="查询项目已开通服务和用量",
@@ -263,8 +344,10 @@ async def list_project_services(
 async def apply_project_service(
     project_id: UUID,
     payload: ServiceApplicationRequest,
+    request: Request,
     current_user: Annotated[User, Depends(get_current_user)],
     service: Annotated[ProjectServiceManagement, Depends(get_service_management)],
+    recorder: Annotated[GatewayRequestRecorder, Depends(get_request_recorder)],
 ) -> ProjectServiceResponse:
     """项目 owner 提交申请后自动开通，无支付流程。"""
     try:
@@ -275,6 +358,14 @@ async def apply_project_service(
             value
             for value in await service.list_for_project(project_id, current_user)
             if value.service_code == payload.service_code
+        )
+        await record_project_operation(
+            recorder,
+            request,
+            current_user,
+            project_id,
+            "service.apply",
+            f"申请项目服务 {payload.service_code}，月额度={payload.monthly_token_limit}",
         )
     except (
         ServiceAccessNotFoundError,
@@ -295,8 +386,10 @@ async def update_project_service_allocation(
     project_id: UUID,
     service_code: str,
     payload: ProjectServiceAllocationRequest,
+    request: Request,
     current_user: Annotated[User, Depends(get_current_user)],
     service: Annotated[ProjectServiceManagement, Depends(get_service_management)],
+    recorder: Annotated[GatewayRequestRecorder, Depends(get_request_recorder)],
 ) -> ProjectServiceResponse:
     """项目 owner 可调整项目额度；执行时校验个人可分配余额和当月已用量。"""
     try:
@@ -307,6 +400,14 @@ async def update_project_service_allocation(
             value
             for value in await service.list_for_project(project_id, current_user)
             if value.service_code == service_code
+        )
+        await record_project_operation(
+            recorder,
+            request,
+            current_user,
+            project_id,
+            "service.allocation.update",
+            f"调整项目服务 {service_code} 月额度为 {payload.monthly_token_limit}",
         )
     except (
         ServiceAccessNotFoundError,

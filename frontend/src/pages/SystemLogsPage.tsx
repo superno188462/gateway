@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import type { FormEvent } from "react";
+import { useSearchParams } from "react-router-dom";
 import { apiClient, ApiClientError, type TechnicalLogEntry } from "../api/client";
 import { useAuth } from "../auth/useAuth";
 
@@ -10,12 +11,14 @@ function explain(reason: unknown): string {
 
 export function SystemLogsPage() {
   const { token } = useAuth();
+  const [searchParams] = useSearchParams();
+  const initialTraceId = searchParams.get("trace_id") ?? "";
   const [entries, setEntries] = useState<TechnicalLogEntry[]>([]);
   const [logFile, setLogFile] = useState("gateway.log");
   const [level, setLevel] = useState<TechnicalLogEntry["level"] | "">("");
-  const [traceId, setTraceId] = useState("");
+  const [traceId, setTraceId] = useState(initialTraceId);
   const [query, setQuery] = useState("");
-  const [applied, setApplied] = useState({ level: "" as TechnicalLogEntry["level"] | "", traceId: "", query: "" });
+  const [applied, setApplied] = useState({ level: "" as TechnicalLogEntry["level"] | "", traceId: initialTraceId, query: "" });
   const [currentPage, setCurrentPage] = useState(1);
   const [totalPages, setTotalPages] = useState(0);
   const [totalCount, setTotalCount] = useState(0);
@@ -91,6 +94,7 @@ export function SystemLogsPage() {
         <label className="project-field"><span>事件内容</span><input maxLength={200} onChange={(event) => setQuery(event.target.value)} placeholder="搜索日志消息" value={query} /></label>
         <button className="primary-button" type="submit">筛选</button>
       </form>
+      {applied.traceId && <p className="verification-note">当前技术日志已按操作日志 Trace ID 筛选：<code>{applied.traceId}</code></p>}
       <div className="project-detail-panel request-log-panel system-log-panel">
         <div className="usage-panel-heading"><div><h3>运行事件</h3><p>后端按页读取 · 每页 50 条 · 手动刷新</p></div><span>{paginationAvailable ? `共 ${new Intl.NumberFormat("zh-CN").format(totalCount)} 条` : `${entries.length} 条（旧版接口响应）`}</span></div>
         {entries.length === 0 ? <div className="empty-state">{loading ? "正在读取日志…" : "当前日志文件没有匹配记录。"}</div> : (

@@ -20,7 +20,7 @@ class ApiKeyNotFoundError(RuntimeError):
 
 
 class ApiKeyForbiddenError(RuntimeError):
-    """当前用户不是项目所有者。"""
+    """当前用户不是项目成员，或试图管理其他成员的 Key。"""
 
 
 class ApiKeyInvalidError(RuntimeError):
@@ -33,10 +33,12 @@ class ApiKeyConfigurationError(RuntimeError):
 
 @dataclass(frozen=True, slots=True)
 class ApiKeyInfo:
-    """可向授权 owner/editor 展示的 API Key 信息。"""
+    """仅向 Key 创建者展示的 API Key 信息。"""
 
     id: UUID
     project_id: UUID
+    created_by_user_id: UUID
+    created_by_username: str
     name: str
     key_prefix: str
     key_last_four: str
@@ -64,6 +66,8 @@ class VerifiedApiKey:
     project_id: UUID
     owner_id: UUID
     name: str
+    user_id: UUID | None = None
+    username: str | None = None
 
 
 class ApiKeyService:
@@ -81,12 +85,16 @@ class ApiKeyService:
     async def list_for_project(self, project_id: UUID, user: User) -> list[ApiKeyInfo]:
         async with self._session_factory() as session:
             await self._require_project_role(session, project_id, user, {"owner", "editor"})
-            result = await session.scalars(
-                select(ApiKey)
-                .where(ApiKey.project_id == project_id)
+            result = await session.execute(
+                select(ApiKey, User.username)
+                .join(User, User.id == ApiKey.created_by_user_id)
+                .where(
+                    ApiKey.project_id == project_id,
+                    ApiKey.created_by_user_id == user.id,
+                )
                 .order_by(ApiKey.created_at.desc(), ApiKey.id.desc())
             )
-            return [self._to_info(key) for key in result.all()]
+            return [self._to_info(key, username) for key, username in result.all()]
 
     async def create(
         self, project_id: UUID, user: User, name: str, expires_at: datetime | None
@@ -102,6 +110,7 @@ class ApiKeyService:
         secret = f"agw_{secrets.token_urlsafe(32)}"
         key = ApiKey(
             project_id=project_id,
+            created_by_user_id=user.id,
             name=name,
             key_hash=self._digest(secret),
             encrypted_secret=self._cipher.encrypt(secret.encode("utf-8")).decode("ascii"),
@@ -111,18 +120,22 @@ class ApiKeyService:
             expires_at=expires_at,
         )
         async with self._session_factory.begin() as session:
-            await self._require_owner(session, project_id, user)
+            await self._require_project_role(session, project_id, user, {"owner", "editor"})
             session.add(key)
             await session.flush()
             await session.refresh(key)
-            info = self._to_info(key)
+            info = self._to_info(key, user.username)
         return CreatedApiKey(info=info, secret=secret)
 
     async def revoke(self, project_id: UUID, key_id: UUID, user: User) -> None:
         async with self._session_factory.begin() as session:
-            await self._require_owner(session, project_id, user)
+            await self._require_project_role(session, project_id, user, {"owner", "editor"})
             key = await session.scalar(
-                select(ApiKey).where(ApiKey.project_id == project_id, ApiKey.id == key_id)
+                select(ApiKey).where(
+                    ApiKey.project_id == project_id,
+                    ApiKey.id == key_id,
+                    ApiKey.created_by_user_id == user.id,
+                )
             )
             if key is None:
                 raise ApiKeyNotFoundError("API Key 不存在")
@@ -135,9 +148,18 @@ class ApiKeyService:
         prefix = secret[: self.prefix_length]
         async with self._session_factory.begin() as session:
             row = await session.execute(
-                select(ApiKey, Project.owner_id)
+                select(ApiKey, Project.owner_id, User.username)
                 .join(Project, Project.id == ApiKey.project_id)
-                .where(ApiKey.key_prefix == prefix)
+                .join(
+                    ProjectMember,
+                    (ProjectMember.project_id == ApiKey.project_id)
+                    & (ProjectMember.user_id == ApiKey.created_by_user_id),
+                )
+                .join(User, User.id == ApiKey.created_by_user_id)
+                .where(
+                    ApiKey.key_prefix == prefix,
+                    ProjectMember.role.in_({"owner", "editor"}),
+                )
             )
             result = row.one_or_none()
             key = result[0] if result is not None else None
@@ -168,14 +190,12 @@ class ApiKeyService:
                 project_id=key.project_id,
                 owner_id=result[1],
                 name=key.name,
+                user_id=key.created_by_user_id,
+                username=result[2],
             )
 
     def _digest(self, secret: str) -> str:
         return hmac.new(self._digest_key, secret.encode("utf-8"), hashlib.sha256).hexdigest()
-
-    @staticmethod
-    async def _require_owner(session: AsyncSession, project_id: UUID, user: User) -> None:
-        await ApiKeyService._require_project_role(session, project_id, user, {"owner"})
 
     @staticmethod
     async def _require_project_role(
@@ -192,13 +212,13 @@ class ApiKeyService:
         )
         if role not in allowed_roles:
             message = (
-                "只有项目 owner 可以创建或撤销 API Key"
+                "需要项目 owner 或 editor 权限才能管理 API Key"
                 if allowed_roles == {"owner"}
                 else "需要项目 owner 或 editor 权限才能查看 API Key"
             )
             raise ApiKeyForbiddenError(message)
 
-    def _to_info(self, key: ApiKey) -> ApiKeyInfo:
+    def _to_info(self, key: ApiKey, username: str) -> ApiKeyInfo:
         state = key.status
         if state == "active" and key.expires_at is not None and key.expires_at <= datetime.now(UTC):
             state = "expired"
@@ -215,6 +235,8 @@ class ApiKeyService:
         return ApiKeyInfo(
             id=key.id,
             project_id=key.project_id,
+            created_by_user_id=key.created_by_user_id,
+            created_by_username=username,
             name=key.name,
             key_prefix=key.key_prefix,
             key_last_four=key.key_last_four,

@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from uuid import UUID
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.domain.service_catalog import ServiceCatalogItem
@@ -64,9 +64,21 @@ class ProjectServiceInfo:
 
     project_id: UUID
     service_code: str
-    monthly_token_limit: int
+    monthly_token_limit: int | None
     status: str
     period_start: str
+    tokens_used: int
+    tokens_reserved: int
+
+
+@dataclass(frozen=True, slots=True)
+class ServiceProjectInfo:
+    """项目已申请的某项服务及其本月用量。"""
+
+    project: Project
+    service_code: str
+    monthly_token_limit: int | None
+    status: str
     tokens_used: int
     tokens_reserved: int
 
@@ -90,8 +102,69 @@ class ProjectServiceManagement:
         return self._catalog
 
     async def catalog(self) -> tuple[ServiceCatalogItem, ...]:
-        """列出目前可申请的模型服务目录。"""
+        """列出目前可申请的 AI 推理与项目数据服务目录。"""
         return await self._current_catalog()
+
+    async def list_projects_for_service(
+        self, service_code: str, user: User, offset: int, limit: int
+    ) -> tuple[list[ServiceProjectInfo], int]:
+        """分页列出当前用户可访问且已开通指定服务的运行中项目。"""
+        if not any(item.code == service_code for item in await self._current_catalog()):
+            raise ServiceAccessNotFoundError("服务不存在")
+        conditions = [
+            Project.status == "active",
+            ProjectServiceSubscription.service_code == service_code,
+            ProjectServiceSubscription.status == "active",
+        ]
+        if user.role != "admin":
+            conditions.append(
+                or_(
+                    Project.visibility == "public",
+                    Project.id.in_(
+                        select(ProjectMember.project_id).where(ProjectMember.user_id == user.id)
+                    ),
+                )
+            )
+        now = datetime.now(UTC)
+        period_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        async with self._session_factory() as session:
+            total = await session.scalar(
+                select(func.count(Project.id))
+                .join(
+                    ProjectServiceSubscription,
+                    ProjectServiceSubscription.project_id == Project.id,
+                )
+                .where(*conditions)
+            )
+            rows = await session.execute(
+                select(Project, ProjectServiceSubscription, ServiceUsageBucket)
+                .join(
+                    ProjectServiceSubscription,
+                    ProjectServiceSubscription.project_id == Project.id,
+                )
+                .outerjoin(
+                    ServiceUsageBucket,
+                    (ServiceUsageBucket.project_id == Project.id)
+                    & (ServiceUsageBucket.service_code == service_code)
+                    & (ServiceUsageBucket.period_start == period_start),
+                )
+                .where(*conditions)
+                .order_by(Project.created_at.desc(), Project.id.desc())
+                .offset(offset)
+                .limit(limit)
+            )
+            items = [
+                ServiceProjectInfo(
+                    project=project,
+                    service_code=subscription.service_code,
+                    monthly_token_limit=subscription.monthly_token_limit,
+                    status=subscription.status,
+                    tokens_used=bucket.tokens_used if bucket is not None else 0,
+                    tokens_reserved=bucket.tokens_reserved if bucket is not None else 0,
+                )
+                for project, subscription, bucket in rows.all()
+            ]
+            return items, int(total or 0)
 
     async def list_for_project(self, project_id: UUID, user: User) -> list[ProjectServiceInfo]:
         """列出项目已开通服务；项目成员和管理员可 review。"""
@@ -123,9 +196,13 @@ class ProjectServiceManagement:
             return items
 
     async def apply(
-        self, project_id: UUID, user: User, service_code: str, monthly_token_limit: int
+        self,
+        project_id: UUID,
+        user: User,
+        service_code: str,
+        monthly_token_limit: int | None,
     ) -> None:
-        """为项目开通服务并分配指定月额度；额度来自项目 owner 的个人上限。"""
+        """申请项目服务；AI 服务分配 token，数据服务只建立订阅门禁。"""
         await self._change_allocation(
             project_id, user, service_code, monthly_token_limit, applying=True
         )
@@ -143,7 +220,7 @@ class ProjectServiceManagement:
         project_id: UUID,
         user: User,
         service_code: str,
-        monthly_token_limit: int,
+        monthly_token_limit: int | None,
         applying: bool,
     ) -> None:
         item = next(
@@ -151,6 +228,36 @@ class ProjectServiceManagement:
         )
         if item is None:
             raise ServiceAccessNotFoundError("服务不存在")
+        if item.quota_unit is None:
+            if not applying:
+                raise ServiceAccessConflictError("该服务没有可调整的 AI token 额度")
+            if monthly_token_limit is not None:
+                raise ServiceAccessConflictError("该服务不使用 AI token 额度")
+            async with self._session_factory.begin() as session:
+                project_owner_id = await session.scalar(
+                    select(Project.owner_id).where(Project.id == project_id)
+                )
+                if project_owner_id is None:
+                    raise ServiceAccessNotFoundError("项目不存在")
+                if project_owner_id != user.id:
+                    raise ServiceAccessForbiddenError("只有项目 owner 可以申请服务")
+                await session.scalar(
+                    select(Project.id).where(Project.id == project_id).with_for_update()
+                )
+                current = await session.get(ProjectServiceSubscription, (project_id, service_code))
+                if current is not None:
+                    raise ServiceAccessConflictError("项目已申请该服务")
+                session.add(
+                    ProjectServiceSubscription(
+                        project_id=project_id,
+                        service_code=service_code,
+                        monthly_token_limit=None,
+                        status="active",
+                    )
+                )
+            return
+        if monthly_token_limit is None:
+            raise ServiceAccessConflictError("申请此 AI 服务必须提供项目 token 月额度")
         if monthly_token_limit <= 0:
             raise ServiceAccessConflictError("项目月度分配额度必须大于 0")
         async with self._session_factory.begin() as session:
@@ -253,6 +360,8 @@ class ProjectServiceManagement:
             period_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
             items: list[UserServiceQuotaInfo] = []
             for item in await self._current_catalog():
+                if item.quota_unit != "tokens":
+                    continue
                 quota = await session.get(UserServiceQuota, (user_id, item.code))
                 allocated = (
                     await session.scalar(
@@ -301,8 +410,13 @@ class ProjectServiceManagement:
         self, user_id: UUID, service_code: str, monthly_token_limit: int
     ) -> UserServiceQuotaInfo:
         """管理员设定用户级服务月上限；低于项目分配时保留分配并由总额度限制调用。"""
-        if not any(item.code == service_code for item in await self._current_catalog()):
+        catalog_item = next(
+            (item for item in await self._current_catalog() if item.code == service_code), None
+        )
+        if catalog_item is None:
             raise ServiceAccessNotFoundError("服务不存在")
+        if catalog_item.quota_unit != "tokens":
+            raise ServiceAccessConflictError("该服务不使用 AI token 额度")
         if monthly_token_limit < 0:
             raise ServiceAccessConflictError("月度额度不能小于 0")
         async with self._session_factory.begin() as session:

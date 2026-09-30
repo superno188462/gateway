@@ -92,6 +92,8 @@ class LlmGatewayService:
                 api_key_id=api_key.id,
                 service_code=self.service_code,
                 description=f"LLM 请求处理中，模型 {model}",
+                actor_user_id=api_key.user_id,
+                actor_username=api_key.username,
             )
             session.add(LlmRequestUsage(request_id=request_id, model=model))
         try:
@@ -256,6 +258,8 @@ class LlmGatewayService:
                 api_key_id=api_key.id,
                 service_code=self.service_code,
                 description=f"LLM 流式请求处理中，模型 {model}",
+                actor_user_id=api_key.user_id,
+                actor_username=api_key.username,
             )
             session.add(LlmRequestUsage(request_id=request_id, model=model))
         try:
@@ -519,9 +523,7 @@ class LlmGatewayService:
                 )
                 .with_for_update()
             )
-            quota_timings["user_quota_lock_ms"] = (
-                time.perf_counter() - query_started
-            ) * 1000
+            quota_timings["user_quota_lock_ms"] = (time.perf_counter() - query_started) * 1000
             query_started = time.perf_counter()
             subscription = await session.scalar(
                 select(ProjectServiceSubscription)
@@ -532,9 +534,7 @@ class LlmGatewayService:
                 )
                 .with_for_update()
             )
-            quota_timings["subscription_lock_ms"] = (
-                time.perf_counter() - query_started
-            ) * 1000
+            quota_timings["subscription_lock_ms"] = (time.perf_counter() - query_started) * 1000
             if user_quota is None:
                 audit_context["decision"] = "user_quota_missing"
                 rejection = GatewayRequestError(
@@ -610,6 +610,14 @@ class LlmGatewayService:
                     audit_context["decision"] = "user_quota_exceeded"
                     rejection = GatewayRequestError(
                         "user_quota_exceeded", "用户本月 LLM token 总额度不足", 429, request_id
+                    )
+                elif subscription.monthly_token_limit is None:
+                    audit_context["decision"] = "service_quota_configuration_error"
+                    rejection = GatewayRequestError(
+                        "service_quota_configuration_error",
+                        "LLM 服务项目额度配置异常",
+                        500,
+                        request_id,
                     )
                 elif (
                     bucket.tokens_used + bucket.tokens_reserved + reservation

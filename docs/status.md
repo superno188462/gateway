@@ -9,16 +9,16 @@
 | F0 | React 基础、路由、布局、类型安全 API Client | 能访问健康检查 | 已完成 |
 | A1 | 统一登录、角色、JWT | 四种启动分支和登录流程 | 已完成 |
 | A2 | 项目管理 | CRUD、项目成员权限、标签检索和分页 | 功能已完成；隔离 PostgreSQL 集成验收待执行 |
-| A3 | API Key | owner/editor 可查看明文、加密存储、撤销 | 已完成 |
+| A3 | API Key | owner/editor 按成员创建自有 Key，私有可见，移除/降权自动撤销，日志可追溯 | 已完成 |
 | A4 | LLM 网关与 OpenAI 兼容上游 | 用户级额度、项目分配、项目 Key 调用、同名直通与优先级故障切换 | 功能已完成；真实供应商经网关端到端验证待执行 |
 | A5 | 日志与用量 | 通用请求日志、服务专属计量、数据库页码分页、汇总一致、日志保留 | 已完成 |
-| A6 | 模板与记忆 | 固定目录、文件 CRUD、并发冲突 | 未开始 |
+| A6 | 模板与记忆 | 固定目录、文件 CRUD、并发冲突 | 实施中 |
 | A7 | 公网部署 | TLS、限流、备份、回滚和安全验收 | 未开始 |
 
 ## 当前阶段
 
-- 当前：A5 日志与用量已实现，等待用户联调；统一请求生命周期记录器、项目级日志、管理员全局日志、Dashboard 和保留任务均已实现。
-- 本轮不包含：ASR/TTS/Embedding/RAG/记忆/画像和公网部署。
+- 当前：A6 模板与记忆；已新增固定分类设计、PostgreSQL 资源模型与迁移、项目隔离 API 和后端集成测试，前端设计已补充待用户审阅。
+- 本轮不包含：A7 公网部署及其他 ASR/TTS/Embedding/RAG 服务。
 - 运行约定：后端 `uv run python main.py`；前端在 F0 后使用 `npm run dev`；运行时数据库使用服务器 PostgreSQL。Docker 仅用于后续服务器部署。
 - DI 约定：`AppContainer` 注册配置、数据库引擎和基础设施服务单例；路由通过 FastAPI `Depends` 获取，不自行创建服务。
 
@@ -171,6 +171,11 @@
 
 ## A5 日志与用量验证记录
 
+- 日志页面统一称为“操作日志”，记录服务调用与项目管理操作。项目成员（含 viewer）按项目查看，管理员可跨项目筛选。项目、成员、API Key、服务额度和资源模板/记忆变更会写入操作日志，显示操作者和脱敏描述；不保存模板正文或密钥。
+- `gateway_requests.event_type` 区分 `service_call` 与 `project_operation`。LLM 用量汇总只统计服务调用，管理操作不会混入调用量和 token 计量。技术日志仍是管理员专用诊断日志。
+- API Key 已改为成员个人凭据：owner/editor 均可创建、查看和撤销本人创建的 Key；项目成员不能查看或撤销其他成员的 Key。成员被降为 viewer 或移出项目时，其有效 Key 在同一数据库事务中自动撤销。
+- 服务调用操作日志和技术日志记录 Key 归属的成员 ID、用户名及 Key ID。历史共享 Key 在迁移时归属项目 owner，既有调用记录按该归属回填；旧历史技术日志文件不回填身份字段。
+
 - 普通用户在项目详情进入该项目日志；后端只允许查看本人有权限的项目。管理员在全局日志页按项目、服务、状态、Request ID 和时间筛选。
 - 管理员另有独立“技术日志”页面，读取后端按日轮转的运行日志文件，展示毫秒时间、等级、模块来源、事件和 Trace ID，支持按等级、Trace ID、事件内容筛选和页码分页；打开页面时读取一次，后续仅在手动刷新、提交筛选或切换页码时读取；接口仅管理员可访问。日志文件查询最多扫描尾部 5,000 行，每次只返回当前页。LLM 技术日志覆盖认证、路由、额度、上游连接尝试和服务调用结果。
 - 项目调用日志 API 通过数据库 `LIMIT/OFFSET` 执行页码查询，响应明确返回 `page`、`page_size`、`total_count`、`total_pages`；前端一次只展示当前页，不将多页结果累积成一张列表。旧游标与 `limit` 请求参数仍可兼容使用。
@@ -192,6 +197,29 @@
 - 请求进入至发出上游请求的整体前置阶段约 935/823 ms，但不能视为数据库耗时总和；API Key 校验、请求/LLM 用量记录初始化、模型支持检查和最终路由读取等操作尚未分别计时。
 - 后续先为上述数据库操作及连接池等待补充分项计时，再依据结果决定是否合并 SQL/事务、调整连接池或采用缓存。保留用户额度行锁的并发保护，不在缺少测量时移除额度一致性控制。
 
+## A6 模板与记忆实施记录
+
+- 新增 `resources` 表及 Alembic 迁移 `20260930_0026`；已经把当前数据库从 `20260930_0025` 升级至 `20260930_0026 (head)`。
+- 新增固定目录 `memory/{sessions,profiles,longterm}` 和 `template/{system,user,assistant}`；资源内容落数据库，不解析或拼接为服务器文件路径。活动文件在项目/目录内名称唯一，删除使用软删除，之后可重用原文件名。
+- 新增项目资源目录、列表、读取、创建、更新、软删除 API。owner/editor 可写，viewer 和公开项目访问者只读；管理员全局 review 只读，若管理员本身是该项目明确 owner/editor 则按项目角色授权。所有资源读写都同时校验 project_id 与 resource_id。
+- 更新/删除需要 `expected_version`；成功更新递增版本，过期版本返回 `409 version_conflict`。OpenAPI 已从 FastAPI 实际应用重新生成并提交固定错误结构。
+- 集成验证：`uv run pytest -q tests/integration/test_project_resources.py` 为 1 passed；完整后端测试为 43 passed、4 skipped（均因未配置独立 `TEST_DATABASE_URL`）。`uv run ruff check app tests migrations/versions/20260930_0026_project_resources.py` 和 `uv run mypy app` 通过。
+- `ruff format --check` 对 A6 文件通过；检查整个既有代码树时仍报告 4 个既有 LLM 计时实现和测试文件需要格式化，本轮没有顺带改动这些无关文件。
+- UI 设计文档已补齐路由、固定目录、只读/可写角色、编辑和删除状态、并发冲突处理与接口映射；现已实现项目上下文管理页。
+- A6 服务边界已澄清：模板、短期/长期记忆、用户画像组成独立的项目上下文服务，项目申请后由项目 API Key 调用；AI 推理额度只用于 LLM、Embedding、RAG、TTS、ASR 等模型服务，不用于上下文数据存取。项目订阅门禁和运行时 API 已实现。
+
+### A6 项目上下文服务完整实现（待用户验收）
+
+- 服务目录注册 `project-context-v1`，项目 owner 可以在项目详情申请开通；数据服务订阅的 `monthly_token_limit` 为 `null`，上下文服务不会出现在 AI token 配额中。
+- 新增 `project_session_memories`、`project_long_term_memories`、`project_user_profiles` 三张项目隔离表，迁移 `20260930_0027`、`20260930_0028` 已实际升级到数据库。
+- 新增项目 API Key 运行时路由：模板读取；短期记忆读/写/删除和 TTL（过期数据由后台任务每小时物理清理）；长期记忆分页、创建、版本更新与软删除；用户画像读取和版本化替换。项目 ID 只从 API Key 解析。
+- 短期消息新增 `project_session_messages` 表，按项目、外部用户、会话和数据库递增序列存储 `role/content`；支持批量追加、按顺序读取最近 1–100 条、TTL 和清除整个会话。原有短期 key/value JSON 表和 API 保留兼容。
+- 新增 JWT 控制台项目列表与权限接口：上下文服务入口按页只列出当前用户可访问、服务已启用的运行中项目；owner/editor 可查询和编辑动态上下文，viewer 拒绝查询，管理员跨项目只读。管理员控制台查询不读取或展示项目 API Key。
+- 每个通过 API Key 的上下文请求都写入 `gateway_requests`，包含服务码、Trace ID、审计结果、状态、错误码及耗时；不会写入模板、记忆或画像正文。
+- 左侧“服务”父级对所有用户显示 LLM 与上下文管理子项；上下文项目页分服务展示可访问项目，项目下再进入提示词模板、短期记忆、长期记忆、用户画像四个独立路由。项目详情仍保留模板页快捷入口。
+- 提示词模板通过登录态资源 API 创建/编辑/删除，运行时 API 支持按模板 ID 或分类/名称读取。Swagger UI 的模板、messages、长期记忆和画像请求模型提供完整 JSON 示例；短期新消息 API 为多条 OpenAI 风格 role/content 消息，旧 key/value 路由兼容。
+- 验证：PostgreSQL `mydb` 已升级至 `20260930_0029 (head)`；`uv run pytest -m 'not integration' -q` 为 36 passed、12 deselected；上下文和资源集成测试 2 passed；`uv run ruff check app tests migrations/versions/20260930_0029_session_messages.py`、`uv run mypy app`、OpenAPI 合同测试、前端 `npm run build` 和 `npm run lint` 均通过。
+
 ## 下一步
 
-请先通过 Swagger 或前端测试 A5 日志；确认后再进入 A6 模板与记忆。
+A6 验收完成后再进入 A7 公网部署。

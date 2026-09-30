@@ -11,6 +11,10 @@ export default defineConfig({
         changeOrigin: true,
         rewrite: (path) => (path.startsWith("/api/health/") ? path.replace(/^\/api/, "") : path),
       },
+      "/v1/context": {
+        target: "http://127.0.0.1:8000",
+        changeOrigin: true,
+      },
     },
   },
 });

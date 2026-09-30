@@ -34,11 +34,15 @@ class RequestLogQueryError(RuntimeError):
 
 @dataclass(frozen=True, slots=True)
 class RequestLogItem:
-    """不包含凭据和请求正文的调用日志行。"""
+    """不包含凭据和请求正文的项目操作日志行。"""
 
     request_id: str
     trace_id: str
+    event_type: str
+    actor_user_id: UUID | None
+    actor_username: str | None
     project_id: UUID | None
+    api_key_id: UUID | None
     project_name: str | None
     service_code: str
     status: str
@@ -103,7 +107,7 @@ class RequestUsageSummary:
 
 @dataclass(frozen=True, slots=True)
 class RetentionRunInfo:
-    """一次调用日志保留任务的可审计状态。"""
+    """一次操作日志保留任务的可审计状态。"""
 
     id: UUID
     status: str
@@ -114,7 +118,7 @@ class RetentionRunInfo:
 
 
 class RequestLogService:
-    """按项目权限查询调用日志，并保留最近 30 天与最新 10,000 条记录。"""
+    """按项目权限查询操作日志，并保留最近 30 天与最新 10,000 条记录。"""
 
     RETENTION_DAYS = 30
     MINIMUM_RECORDS = 10_000
@@ -136,6 +140,7 @@ class RequestLogService:
         async with self._session_factory() as session:
             await self._ensure_project_access(session, user, project_id)
             filters = self._filters(user, start_at, end_at, project_id)
+            filters.append(GatewayRequest.event_type == "service_call")
             aggregate = await session.execute(
                 select(
                     func.count(GatewayRequest.id),
@@ -255,8 +260,9 @@ class RequestLogService:
                     tuple_(GatewayRequest.created_at, GatewayRequest.id) < cursor_position
                 )
             statement = (
-                select(GatewayRequest, Project.name)
+                select(GatewayRequest, Project.name, User.username)
                 .outerjoin(Project, Project.id == GatewayRequest.project_id)
+                .outerjoin(User, User.id == GatewayRequest.actor_user_id)
                 .where(*filters)
                 .order_by(GatewayRequest.created_at.desc(), GatewayRequest.id.desc())
                 .limit(limit + 1)
@@ -271,7 +277,11 @@ class RequestLogService:
                 RequestLogItem(
                     request_id=row.request_id,
                     trace_id=row.trace_id,
+                    event_type=row.event_type,
+                    actor_user_id=row.actor_user_id,
+                    actor_username=row.actor_username or actor_username,
                     project_id=row.project_id,
+                    api_key_id=row.api_key_id,
                     project_name=project_name,
                     service_code=row.service_code,
                     status=row.status,
@@ -284,7 +294,7 @@ class RequestLogService:
                     description=row.description,
                     created_at=row.created_at,
                 )
-                for row, project_name in result_rows
+                for row, project_name, actor_username in result_rows
             )
             total_pages = (total_count + limit - 1) // limit
             has_next_page = page * limit < total_count
@@ -301,8 +311,9 @@ class RequestLogService:
         """Return a single sanitized request record after applying project visibility."""
         async with self._session_factory() as session:
             query = (
-                select(GatewayRequest, Project.name)
+                select(GatewayRequest, Project.name, User.username)
                 .outerjoin(Project, Project.id == GatewayRequest.project_id)
+                .outerjoin(User, User.id == GatewayRequest.actor_user_id)
                 .where(GatewayRequest.request_id == request_id)
             )
             if user.role != "admin":
@@ -313,11 +324,15 @@ class RequestLogService:
             row = result.first()
             if row is None:
                 raise RequestLogNotFoundError("请求日志不存在或无权查看")
-            item, project_name = row
+            item, project_name, actor_username = row
             return RequestLogItem(
                 request_id=item.request_id,
                 trace_id=item.trace_id,
+                event_type=item.event_type,
+                actor_user_id=item.actor_user_id,
+                actor_username=item.actor_username or actor_username,
                 project_id=item.project_id,
+                api_key_id=item.api_key_id,
                 project_name=project_name,
                 service_code=item.service_code,
                 status=item.status,

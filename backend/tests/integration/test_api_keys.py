@@ -30,7 +30,7 @@ def database_url() -> str:
     return os.getenv("TEST_DATABASE_URL") or Settings().database_url
 
 
-async def test_project_key_lifecycle_and_owner_boundary() -> None:
+async def test_personal_project_key_lifecycle_and_membership_revocation() -> None:
     engine = create_async_engine(database_url())
     factory = async_sessionmaker(engine, expire_on_commit=False)
     owner_id, editor_id, other_id, project_id = uuid4(), uuid4(), uuid4(), uuid4()
@@ -85,12 +85,23 @@ async def test_project_key_lifecycle_and_owner_boundary() -> None:
         assert listed[0].key_prefix == created.secret[:20]
         assert listed[0].key_last_four == created.secret[-4:]
         assert listed[0].secret == created.secret
+        assert listed[0].created_by_user_id == owner_id
+        assert listed[0].created_by_username == owner.username
         assert await service.verify(created.secret) == VerifiedApiKey(
             id=created.info.id,
             project_id=created.info.project_id,
             owner_id=owner_id,
             name=created.info.name,
+            user_id=owner_id,
+            username=owner.username,
         )
+        editor_created = await service.create(project_id, editor, "editor personal key", None)
+        assert [item.id for item in await service.list_for_project(project_id, owner)] == [
+            created.info.id
+        ]
+        assert [item.id for item in await service.list_for_project(project_id, editor)] == [
+            editor_created.info.id
+        ]
 
         app = create_app(
             settings=Settings(
@@ -117,16 +128,66 @@ async def test_project_key_lifecycle_and_owner_boundary() -> None:
                 f"/api/admin/v1/projects/{project_id}/keys", headers=editor_headers
             )
             assert owner_list.status_code == editor_list.status_code == 200
-            assert http_secret in [item["secret"] for item in editor_list.json()]
-            denied = await client.post(
+            assert {item["secret"] for item in owner_list.json()} == {
+                created.secret,
+                http_secret,
+            }
+            assert [item["created_by_user_id"] for item in editor_list.json()] == [
+                str(editor_id)
+            ]
+            editor_created_response = await client.post(
                 f"/api/admin/v1/projects/{project_id}/keys",
                 headers=editor_headers,
-                json={"name": "editor key"},
+                json={"name": "editor http key"},
             )
-            assert denied.status_code == 403
+            assert editor_created_response.status_code == 201
+            editor_secret = editor_created_response.json()["secret"]
+            owner_keys_after_editor = await client.get(
+                f"/api/admin/v1/projects/{project_id}/keys", headers=owner_headers
+            )
+            assert editor_secret not in [item["secret"] for item in owner_keys_after_editor.json()]
+            editor_keys_after_create = await client.get(
+                f"/api/admin/v1/projects/{project_id}/keys", headers=editor_headers
+            )
+            assert editor_secret in [item["secret"] for item in editor_keys_after_create.json()]
+            other_key_revoke = await client.delete(
+                f"/api/admin/v1/projects/{project_id}/keys/{editor_created.info.id}",
+                headers=owner_headers,
+            )
+            assert other_key_revoke.status_code == 404
+            demoted = await client.patch(
+                f"/api/admin/v1/projects/{project_id}/members/{editor_id}",
+                headers=owner_headers,
+                json={"role": "viewer"},
+            )
+            assert demoted.status_code == 200
+            assert demoted.json()["role"] == "viewer"
+            with pytest.raises(ApiKeyInvalidError):
+                await service.verify(editor_secret)
+            viewer_list = await client.get(
+                f"/api/admin/v1/projects/{project_id}/keys", headers=editor_headers
+            )
+            assert viewer_list.status_code == 403
+            promoted = await client.patch(
+                f"/api/admin/v1/projects/{project_id}/members/{editor_id}",
+                headers=owner_headers,
+                json={"role": "editor"},
+            )
+            assert promoted.status_code == 200
+            editor_key_after_promotion = await service.create(
+                project_id, editor, "removed member key", None
+            )
+            removed = await client.delete(
+                f"/api/admin/v1/projects/{project_id}/members/{editor_id}",
+                headers=owner_headers,
+            )
+            assert removed.status_code == 204
+            with pytest.raises(ApiKeyInvalidError):
+                await service.verify(editor_key_after_promotion.secret)
         async with factory() as session:
             stored = await session.get(ApiKey, created.info.id)
             assert stored is not None
+            assert stored.created_by_user_id == owner_id
             assert stored.key_hash != created.secret
             assert created.secret not in stored.key_hash
             assert stored.encrypted_secret is not None
@@ -135,9 +196,8 @@ async def test_project_key_lifecycle_and_owner_boundary() -> None:
 
         with pytest.raises(ApiKeyForbiddenError):
             await service.list_for_project(project_id, other)
-        assert len(await service.list_for_project(project_id, editor)) == 2
         with pytest.raises(ApiKeyForbiddenError):
-            await service.create(project_id, editor, "editor cannot create", None)
+            await service.list_for_project(project_id, editor)
         wrong_key_service = ApiKeyService(factory, "different-api-key-secret-is-also-32-chars")
         with pytest.raises(ApiKeyConfigurationError):
             await wrong_key_service.list_for_project(project_id, owner)
@@ -148,6 +208,8 @@ async def test_project_key_lifecycle_and_owner_boundary() -> None:
             await service.verify(created.secret)
         revoked = await service.list_for_project(project_id, owner)
         assert next(key for key in revoked if key.id == created.info.id).status == "revoked"
+        with pytest.raises(ApiKeyInvalidError):
+            await service.verify(editor_created.secret)
     finally:
         if app is not None:
             await app.state.container.close()

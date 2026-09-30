@@ -49,7 +49,15 @@ B0 不创建业务实体。数据库只产生 Alembic 自己的 `alembic_version
 | A3 | `api_keys`，保存 HMAC-SHA256 摘要与 Fernet 加密密文；一个项目可有多把项目级 Key |
 | A4 | `user_service_quotas`、`project_service_subscriptions`、`service_usage_buckets`、通用 `gateway_requests`；LLM 专属用量单独写入 `llm_request_usages` |
 | A5 | 通用请求日志查询、审计阶段和日志保留任务状态；模型与 Token 等服务专属信息不得成为通用日志列 |
-| A6 | `resources` 及乐观并发版本 |
+| A6 | `resources`、`project_session_messages`、`project_session_memories`、`project_long_term_memories`、`project_user_profiles` 及乐观并发版本 |
+
+### A6 资源模块
+
+固定分类由 `app.resources.domain` 声明：`memory/sessions`、`memory/profiles`、`memory/longterm`、`template/system`、`template/user`、`template/assistant`。资源以 `project_id + resource_type + category + name` 标识当前有效文件，内容存储在 PostgreSQL；名称不能包含路径分隔符，资源分类不能由请求动态创建。删除通过 `deleted_at` 软删除，允许后续用相同名称新建。
+
+`app.resources.application` 编排项目访问授权、事务和并发校验，SQLAlchemy 数据访问留在 `app.resources.infrastructure`。管理员凭全局身份可以跨项目读取但不能写入；项目 owner/editor 可以在其所属项目创建、修改、软删除。管理员若是该项目的明确 owner/editor 成员，按成员角色授权。viewer 和公开项目访客只读。每次读写都同时限定项目 ID 和资源 ID。更新、删除必须携带 `expected_version`；版本匹配时递增，过期版本返回 `409 version_conflict`，不覆盖并发修改。
+
+项目上下文服务以项目 API Key 确定运行时项目。短期标准消息在 `project_session_messages` 按项目、外部用户、会话和数据库递增序列存储；原有 `project_session_memories` key/value JSON 接口继续兼容。长期记忆是文本条目及可选 tags/metadata，用户画像是一份项目自定义 JSON。控制台项目列表使用 `project-context-v1` 订阅和项目可见范围分页；动态数据查询使用 JWT 管理端 API，owner/editor 可读写，管理员只读，viewer 被拒绝。控制台管理查询不要求公开或读取 API Key。
 
 ## 配置契约
 
@@ -78,6 +86,7 @@ B0 不创建业务实体。数据库只产生 Alembic 自己的 `alembic_version
 app/
 ├── services/
 │   ├── llm/                 # LLM API、网关用例、领域契约、Provider
+│   ├── project_context/     # 项目模板、短期/长期记忆、用户画像 API
 │   │   └── providers/mock.py
 │   ├── asr/                 # 后续新增，与 llm 平级
 │   ├── tts/                 # 后续新增，与 llm 平级
@@ -96,6 +105,8 @@ app/
 - `services/llm/application.py` 校验服务开通、预留月额度、调用 Provider、结算用量和记录请求；`services/llm/api.py` 提供 OpenAI 风格聊天 API。
 - 网关保留并透传 Chat Completions 标准字段及未声明的 JSON 扩展字段；只重写公开 `model` 到供应商模型名，并替换鉴权。供应商拒绝参数时返回可诊断的安全错误；响应保留供应商兼容字段，但请求正文不入库。
 - `service_management/application.py` 通过容器注入的服务目录管理项目申请、额度和用量；`service_management/api.py` 暴露现有服务目录、订阅、申请和额度 API。
+- 服务目录中的 AI 推理服务（LLM、Embedding、RAG、TTS、ASR）受服务专属额度计量；当前只有 LLM 使用 token 额度，后续服务须明确各自单位。项目上下文服务是独立的数据存取服务，通过项目订阅门禁，但不扣 AI 推理额度；容量和频率限制由该服务自己的配置处理。
+- `services/project_context` 通过目录码 `project-context-v1` 注册为独立数据服务。`ProjectContextService` 以项目 API Key 解析的 project_id 为根边界，先检查项目订阅，再按用户和会话键访问记录。其运行时路由通过 `GatewayRequestRecorder` 记录服务结果元数据，不把数据正文传给记录器。
 - 现有 HTTP 路径和服务目录行为保持兼容。添加新服务时，在 `services/<name>/` 实现模块，并在组合根注册对应目录项；服务管理代码不依赖某个具体 Provider。
 - 调用方使用 `Authorization: Bearer <项目 API Key>`。API Key 服务解析项目 ID，客户端不传项目 ID；认证后的项目必须已有对应服务订阅。
 - `service_usage_buckets` 按项目、服务和 UTC 月初聚合 token；通过数据库行锁序列化同项目同服务的额度预留，避免并发请求同时突破月度上限。

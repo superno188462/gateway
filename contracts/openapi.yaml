@@ -468,6 +468,385 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+  /api/admin/v1/projects/{project_id}/resources/directories:
+    get:
+      tags:
+      - Project Resources
+      summary: 查询项目固定资源目录
+      description: 返回固定目录分类；目录不可新增、重命名或删除。
+      operationId: list_resource_directories_api_admin_v1_projects__project_id__resources_directories_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: project_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Project Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ResourceDirectoryResponse'
+                title: Response List Resource Directories Api Admin V1 Projects  Project
+                  Id  Resources Directories Get
+        '401':
+          description: 需要有效登录令牌。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResourceErrorResponse'
+        '403':
+          description: 无权访问该项目。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResourceErrorResponse'
+        '404':
+          description: 项目或资源不存在。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResourceErrorResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/admin/v1/projects/{project_id}/resources:
+    get:
+      tags:
+      - Project Resources
+      summary: 列出项目资源
+      description: 按项目访问权限列出有效资源；默认返回六个固定目录的全部资源。
+      operationId: list_resources_api_admin_v1_projects__project_id__resources_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: project_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Project Id
+      - name: resource_type
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - enum:
+            - memory
+            - template
+            type: string
+          - type: 'null'
+          description: 固定资源类型。若提供则必须同时提供 category。
+          title: Resource Type
+        description: 固定资源类型。若提供则必须同时提供 category。
+      - name: category
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - enum:
+            - sessions
+            - profiles
+            - longterm
+            - system
+            - user
+            - assistant
+            type: string
+          - type: 'null'
+          description: 固定目录分类。
+          title: Category
+        description: 固定目录分类。
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ResourceResponse'
+                title: Response List Resources Api Admin V1 Projects  Project Id  Resources
+                  Get
+        '401':
+          description: 需要有效登录令牌。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResourceErrorResponse'
+        '403':
+          description: 无权访问该项目。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResourceErrorResponse'
+        '404':
+          description: 项目或资源不存在。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResourceErrorResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    post:
+      tags:
+      - Project Resources
+      summary: 创建项目资源
+      description: 创建目录内同名唯一的资源；需有项目 owner/editor 权限。
+      operationId: create_resource_api_admin_v1_projects__project_id__resources_post
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: project_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Project Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ResourceCreateRequest'
+      responses:
+        '201':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResourceResponse'
+        '401':
+          description: 需要有效登录令牌。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResourceErrorResponse'
+        '403':
+          description: 无权访问该项目。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResourceErrorResponse'
+        '404':
+          description: 项目或资源不存在。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResourceErrorResponse'
+        '409':
+          description: 名称冲突或资源版本已过期。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResourceErrorResponse'
+        '422':
+          description: 请求字段或固定目录无效。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResourceErrorResponse'
+  /api/admin/v1/projects/{project_id}/resources/{resource_id}:
+    get:
+      tags:
+      - Project Resources
+      summary: 读取项目资源
+      description: 同时按项目 ID 和资源 ID 查找，防止跨项目读取。
+      operationId: get_resource_api_admin_v1_projects__project_id__resources__resource_id__get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: project_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Project Id
+      - name: resource_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Resource Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResourceResponse'
+        '401':
+          description: 需要有效登录令牌。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResourceErrorResponse'
+        '403':
+          description: 无权访问该项目。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResourceErrorResponse'
+        '404':
+          description: 项目或资源不存在。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResourceErrorResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    patch:
+      tags:
+      - Project Resources
+      summary: 更新项目资源
+      description: 版本匹配时更新并递增版本；陈旧版本返回 409 version_conflict。
+      operationId: update_resource_api_admin_v1_projects__project_id__resources__resource_id__patch
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: project_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Project Id
+      - name: resource_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Resource Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ResourceUpdateRequest'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResourceResponse'
+        '401':
+          description: 需要有效登录令牌。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResourceErrorResponse'
+        '403':
+          description: 无权访问该项目。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResourceErrorResponse'
+        '404':
+          description: 项目或资源不存在。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResourceErrorResponse'
+        '409':
+          description: 名称冲突或资源版本已过期。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResourceErrorResponse'
+        '422':
+          description: 请求字段或固定目录无效。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResourceErrorResponse'
+    delete:
+      tags:
+      - Project Resources
+      summary: 软删除项目资源
+      description: 版本匹配时设置软删除时间；删除项从默认目录列表中隐藏。
+      operationId: delete_resource_api_admin_v1_projects__project_id__resources__resource_id__delete
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: project_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Project Id
+      - name: resource_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Resource Id
+      - name: expected_version
+        in: query
+        required: true
+        schema:
+          type: integer
+          minimum: 1
+          description: 最近读取的资源版本。
+          title: Expected Version
+        description: 最近读取的资源版本。
+      responses:
+        '204':
+          description: Successful Response
+        '401':
+          description: 需要有效登录令牌。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResourceErrorResponse'
+        '403':
+          description: 无权访问该项目。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResourceErrorResponse'
+        '404':
+          description: 项目或资源不存在。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResourceErrorResponse'
+        '409':
+          description: 名称冲突或资源版本已过期。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResourceErrorResponse'
+        '422':
+          description: 请求字段或固定目录无效。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResourceErrorResponse'
   /api/admin/v1/projects/{project_id}/keys:
     get:
       tags:
@@ -716,6 +1095,52 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+  /api/admin/v1/services/{service_code}/projects:
+    get:
+      tags:
+      - Project Services
+      summary: 列出已开通指定服务的可访问项目
+      description: 返回当前用户可查看且已开通指定服务的运行中项目，管理员可查看全部。
+      operationId: list_projects_for_service_api_admin_v1_services__service_code__projects_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: service_code
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Service Code
+      - name: offset
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 0
+          default: 0
+          title: Offset
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 100
+          minimum: 1
+          default: 20
+          title: Limit
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ServiceProjectPageResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
   /api/admin/v1/projects/{project_id}/services:
     get:
       tags:
@@ -851,7 +1276,8 @@ paths:
       tags:
       - LLM Gateway
       summary: 调用 OpenAI 兼容 Chat Completions 网关
-      description: '通过项目 API Key 自动解析项目并执行额度校验；请求正文不被保存。stream=false 返回完整 JSON；stream=true 等上游响应头成功后立即返回 SSE 响应，并逐帧转发上游数据。响应头发送后发生的上游错误以 SSE error 数据帧通知，且不会切换到其他上游。'
+      description: stream=false 返回完整 JSON；stream=true 在上游响应头成功后返回 SSE，并逐帧转发上游数据。下游响应开始后发生的上游错误通过
+        SSE error 帧通知。
       operationId: chat_completions_v1_chat_completions_post
       requestBody:
         content:
@@ -861,14 +1287,10 @@ paths:
         required: true
       responses:
         '200':
-          description: 'OpenAI 兼容的完整 JSON 响应，或 stream=true 时的 Server-Sent Events。'
+          description: Successful Response
           content:
             application/json:
               schema: {}
-            text/event-stream:
-              schema:
-                type: string
-                description: 'OpenAI Chat Completion chunk 数据帧，最后以 data: [DONE] 结束。'
         '422':
           description: Validation Error
           content:
@@ -877,6 +1299,896 @@ paths:
                 $ref: '#/components/schemas/HTTPValidationError'
       security:
       - HTTPBearer: []
+  /v1/context/templates:
+    post:
+      tags:
+      - Project Context Gateway
+      summary: 通过项目 API Key 创建提示词模板
+      description: 项目由 Bearer API Key 确定；API Key 所属成员需要 owner/editor 权限。
+      operationId: create_template_v1_context_templates_post
+      security:
+      - HTTPBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [category, name, content]
+              properties:
+                category:
+                  type: string
+                  enum: [system, user, assistant]
+                name:
+                  type: string
+                  minLength: 1
+                  maxLength: 200
+                content:
+                  type: string
+                  maxLength: 100000
+      responses:
+        '201':
+          description: 模板创建成功；返回网关生成的模板 ID。
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [id, project_id, category, name, content, version]
+                properties:
+                  id:
+                    type: string
+                    format: uuid
+                  project_id:
+                    type: string
+                    format: uuid
+                  category:
+                    type: string
+                  name:
+                    type: string
+                  content:
+                    type: string
+                  version:
+                    type: integer
+        '401':
+          description: 缺少或无效的项目 API Key。
+        '403':
+          description: 需要有 owner/editor 权限的项目 API Key。
+        '409':
+          description: 同一模板分类下名称已存在。
+        '422':
+          description: 模板字段无效。
+    get:
+      tags:
+      - Project Context Gateway
+      summary: 列出项目提示词模板
+      operationId: list_templates_v1_context_templates_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                title: Response List Templates V1 Context Templates Get
+      security:
+      - HTTPBearer: []
+  /v1/context/templates/by-id/{template_id}:
+    get:
+      tags:
+      - Project Context Gateway
+      summary: 按 ID 读取项目提示词模板
+      description: 使用项目 API Key 确定项目，再按模板稳定 ID 读取。
+      operationId: get_template_by_id_v1_context_templates_by_id__template_id__get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: template_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Template Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                title: Response Get Template By Id V1 Context Templates By Id  Template
+                  Id  Get
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /v1/context/templates/{template_id}:
+    patch:
+      tags:
+      - Project Context Gateway
+      summary: 通过项目 API Key 修改提示词模板
+      description: 使用 Key 所属成员身份更新模板；需要 owner/editor 权限并提交当前版本号。
+      operationId: update_template_v1_context_templates__template_id__patch
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: template_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [expected_version, name, content]
+              properties:
+                expected_version:
+                  type: integer
+                  minimum: 1
+                name:
+                  type: string
+                  minLength: 1
+                  maxLength: 200
+                content:
+                  type: string
+                  maxLength: 100000
+      responses:
+        '200':
+          description: 修改后的模板
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [id, project_id, category, name, content, version]
+                properties:
+                  id: {type: string, format: uuid}
+                  project_id: {type: string, format: uuid}
+                  category: {type: string}
+                  name: {type: string}
+                  content: {type: string}
+                  version: {type: integer}
+        '401':
+          description: 缺少或无效的项目 API Key。
+        '403':
+          description: 需要有 owner/editor 权限的项目 API Key。
+        '404':
+          description: 模板不存在或不属于此项目。
+        '409':
+          description: 名称冲突或模板版本已过期。
+    delete:
+      tags:
+      - Project Context Gateway
+      summary: 通过项目 API Key 删除提示词模板
+      description: 软删除模板；需要提交最近读取到的版本号。
+      operationId: delete_template_v1_context_templates__template_id__delete
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: template_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: expected_version
+        in: query
+        required: true
+        schema:
+          type: integer
+          minimum: 1
+      responses:
+        '204':
+          description: 模板已删除。
+        '401':
+          description: 缺少或无效的项目 API Key。
+        '403':
+          description: 需要有 owner/editor 权限的项目 API Key。
+        '404':
+          description: 模板不存在或不属于此项目。
+        '409':
+          description: 模板版本已过期。
+  /v1/context/templates/{category}/{name}:
+    get:
+      tags:
+      - Project Context Gateway
+      summary: 读取项目提示词模板
+      operationId: get_template_v1_context_templates__category___name__get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: category
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Category
+      - name: name
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Name
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                title: Response Get Template V1 Context Templates  Category   Name  Get
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /v1/context/users/{external_user_id}/sessions/{session_id}/memories:
+    get:
+      tags:
+      - Project Context Gateway
+      summary: 列出会话短期记忆
+      operationId: list_session_memories_v1_context_users__external_user_id__sessions__session_id__memories_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: external_user_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: External User Id
+      - name: session_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Session Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                title: Response List Session Memories V1 Context Users  External User
+                  Id  Sessions  Session Id  Memories Get
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /v1/context/users/{external_user_id}/sessions/{session_id}/messages:
+    get:
+      tags:
+      - Project Context Gateway
+      summary: 读取会话短期消息
+      description: 返回该项目用户会话最近的有效消息，按追加顺序排列；项目由 API Key 确定。
+      operationId: list_session_messages_v1_context_users__external_user_id__sessions__session_id__messages_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: external_user_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: External User Id
+      - name: session_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Session Id
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 100
+          minimum: 1
+          default: 50
+          title: Limit
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionMessagesResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    post:
+      tags:
+      - Project Context Gateway
+      summary: 向会话追加短期消息
+      description: 按请求数组顺序追加 1 到 100 条消息；过期时间按本次请求统一设置。
+      operationId: append_session_messages_v1_context_users__external_user_id__sessions__session_id__messages_post
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: external_user_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: External User Id
+      - name: session_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Session Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SessionMessagesWrite'
+      responses:
+        '201':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionMessagesResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    delete:
+      tags:
+      - Project Context Gateway
+      summary: 清除会话短期消息
+      description: 删除指定项目用户会话的全部消息；适用于会话结束或按用户请求清除数据。
+      operationId: delete_session_messages_v1_context_users__external_user_id__sessions__session_id__messages_delete
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: external_user_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: External User Id
+      - name: session_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Session Id
+      responses:
+        '204':
+          description: Successful Response
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /v1/context/users/{external_user_id}/sessions/{session_id}/memories/{memory_key}:
+    put:
+      tags:
+      - Project Context Gateway
+      summary: 创建或更新短期记忆
+      operationId: put_session_memory_v1_context_users__external_user_id__sessions__session_id__memories__memory_key__put
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: external_user_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: External User Id
+      - name: session_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Session Id
+      - name: memory_key
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Memory Key
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SessionMemoryWrite'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                title: Response Put Session Memory V1 Context Users  External User
+                  Id  Sessions  Session Id  Memories  Memory Key  Put
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    delete:
+      tags:
+      - Project Context Gateway
+      summary: 删除短期记忆
+      operationId: delete_session_memory_v1_context_users__external_user_id__sessions__session_id__memories__memory_key__delete
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: external_user_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: External User Id
+      - name: session_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Session Id
+      - name: memory_key
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Memory Key
+      responses:
+        '204':
+          description: Successful Response
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /v1/context/users/{external_user_id}/memories:
+    get:
+      tags:
+      - Project Context Gateway
+      summary: 分页读取长期记忆
+      operationId: list_long_memories_v1_context_users__external_user_id__memories_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: external_user_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: External User Id
+      - name: page
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 1
+          default: 1
+          title: Page
+      - name: page_size
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 100
+          minimum: 1
+          default: 50
+          title: Page Size
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                title: Response List Long Memories V1 Context Users  External User
+                  Id  Memories Get
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    post:
+      tags:
+      - Project Context Gateway
+      summary: 创建长期记忆
+      operationId: create_long_memory_v1_context_users__external_user_id__memories_post
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: external_user_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: External User Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LongTermMemoryWrite'
+      responses:
+        '201':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                title: Response Create Long Memory V1 Context Users  External User
+                  Id  Memories Post
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /v1/context/users/{external_user_id}/memories/{memory_id}:
+    patch:
+      tags:
+      - Project Context Gateway
+      summary: 更新长期记忆
+      operationId: update_long_memory_v1_context_users__external_user_id__memories__memory_id__patch
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: external_user_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: External User Id
+      - name: memory_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Memory Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LongTermMemoryUpdate'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                title: Response Update Long Memory V1 Context Users  External User
+                  Id  Memories  Memory Id  Patch
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    delete:
+      tags:
+      - Project Context Gateway
+      summary: 删除长期记忆
+      operationId: delete_long_memory_v1_context_users__external_user_id__memories__memory_id__delete
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: external_user_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: External User Id
+      - name: memory_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Memory Id
+      - name: expected_version
+        in: query
+        required: true
+        schema:
+          type: integer
+          minimum: 1
+          title: Expected Version
+      responses:
+        '204':
+          description: Successful Response
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /v1/context/users/{external_user_id}/profile:
+    get:
+      tags:
+      - Project Context Gateway
+      summary: 读取用户画像
+      operationId: get_profile_v1_context_users__external_user_id__profile_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: external_user_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: External User Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                title: Response Get Profile V1 Context Users  External User Id  Profile
+                  Get
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    put:
+      tags:
+      - Project Context Gateway
+      summary: 创建或替换用户画像
+      operationId: put_profile_v1_context_users__external_user_id__profile_put
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: external_user_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: External User Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProfileWrite'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                title: Response Put Profile V1 Context Users  External User Id  Profile
+                  Put
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/admin/v1/context/projects:
+    get:
+      tags:
+      - Project Context Console
+      summary: 列出可管理的上下文项目
+      description: 返回已开通上下文服务且用户可查看的运行中项目；管理员看到全量只读项目。
+      operationId: list_context_projects_api_admin_v1_context_projects_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: offset
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 0
+          default: 0
+          title: Offset
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 100
+          minimum: 1
+          default: 20
+          title: Limit
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ContextProjectPageResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/admin/v1/context/projects/{project_id}/users/{external_user_id}/profile:
+    get:
+      tags:
+      - Project Context Console
+      summary: 控制台读取用户画像
+      description: 项目 owner/editor 可读；管理员可跨项目只读，调用方无需获得项目 API Key。
+      operationId: console_get_profile_api_admin_v1_context_projects__project_id__users__external_user_id__profile_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: project_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Project Id
+      - name: external_user_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: External User Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ContextProfileResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/admin/v1/context/projects/{project_id}/permissions:
+    get:
+      tags:
+      - Project Context Console
+      summary: 查询上下文控制台权限
+      description: 返回项目上下文页面的查询和编辑权限，不返回或验证项目 API Key。
+      operationId: get_context_permissions_api_admin_v1_context_projects__project_id__permissions_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: project_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Project Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ContextPermissionResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/admin/v1/context/projects/{project_id}/users/{external_user_id}/sessions/{session_id}/messages:
+    get:
+      tags:
+      - Project Context Console
+      summary: 控制台读取会话短期消息
+      description: 项目 owner/editor 可读；管理员只读查看，不需要暴露项目 API Key。
+      operationId: console_list_session_messages_api_admin_v1_context_projects__project_id__users__external_user_id__sessions__session_id__messages_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: project_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Project Id
+      - name: external_user_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: External User Id
+      - name: session_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Session Id
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 100
+          minimum: 1
+          default: 50
+          title: Limit
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionMessagesResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/admin/v1/context/projects/{project_id}/users/{external_user_id}/memories:
+    get:
+      tags:
+      - Project Context Console
+      summary: 控制台分页读取长期记忆
+      description: 项目 owner/editor 可读；管理员只读查看，不需要暴露项目 API Key。
+      operationId: console_list_long_memories_api_admin_v1_context_projects__project_id__users__external_user_id__memories_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: project_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Project Id
+      - name: external_user_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: External User Id
+      - name: page
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 1
+          default: 1
+          title: Page
+      - name: page_size
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 100
+          minimum: 1
+          default: 50
+          title: Page Size
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+                title: Response Console List Long Memories Api Admin V1 Context Projects  Project
+                  Id  Users  External User Id  Memories Get
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
   /api/v1/llm/models:
     get:
       tags:
@@ -1113,12 +2425,108 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+  /api/v1/requests:
+    get:
+      tags:
+      - Request Logs and Usage
+      summary: 查询当前用户可访问项目的操作日志
+      description: 返回当前用户有权限查看的项目中的日志，普通用户无法通过参数读取无权限项目。
+      operationId: list_visible_requests_api_v1_requests_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: start_at
+        in: query
+        schema:
+          type: string
+          format: date-time
+      - name: end_at
+        in: query
+        schema:
+          type: string
+          format: date-time
+      - name: project_id
+        in: query
+        schema:
+          type: string
+          format: uuid
+        description: 可选项目筛选；仅对当前用户可访问的项目生效。
+      - name: status
+        in: query
+        schema:
+          type: string
+          enum: [received, succeeded, failed, denied]
+      - name: service_code
+        in: query
+        schema:
+          type: string
+          maxLength: 50
+      - name: request_id
+        in: query
+        schema:
+          type: string
+          maxLength: 64
+      - name: page
+        in: query
+        schema:
+          type: integer
+          minimum: 1
+          default: 1
+      - name: page_size
+        in: query
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 100
+          default: 50
+      responses:
+        '200':
+          description: 当前用户可访问项目的分页日志
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RequestLogPageResponse'
+        '401':
+          description: 需要有效登录令牌。
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v1/requests/{request_id}:
+    get:
+      tags:
+      - Request Logs and Usage
+      summary: 查询当前用户可访问项目中的单条操作日志
+      description: 请求不属于当前用户可访问项目时返回未找到。
+      operationId: get_visible_request_api_v1_requests__request_id__get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: request_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Request Id
+      responses:
+        '200':
+          description: 操作日志详情
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RequestLogResponse'
+        '401':
+          description: 需要有效登录令牌。
+        '404':
+          description: 日志不存在或无权查看。
   /api/v1/projects/{project_id}/requests:
     get:
       tags:
       - Request Logs and Usage
-      summary: 按页码查询项目调用日志
-      description: 只有拥有项目查看权限的用户才能查询该项目日志。
+      summary: 按页码查询项目操作日志
+      description: 只有拥有项目查看权限的用户才能查询该项目操作日志。
       operationId: list_requests_api_v1_projects__project_id__requests_get
       security:
       - HTTPBearer: []
@@ -1248,7 +2656,7 @@ paths:
     get:
       tags:
       - Request Logs and Usage
-      summary: 查询单条调用日志
+      summary: 查询单条操作日志
       description: 仅对可访问项目的成员或管理员返回该请求元数据。
       operationId: get_request_api_v1_projects__project_id__requests__request_id__get
       security:
@@ -1284,8 +2692,8 @@ paths:
     get:
       tags:
       - Request Log Retention
-      summary: 管理员查询全局调用日志
-      description: 仅管理员可查全局调用日志；所有筛选条件均由后端执行。
+      summary: 管理员查询全局操作日志
+      description: 仅管理员可查全局操作日志；所有筛选条件均由后端执行。
       operationId: list_all_requests_api_admin_v1_requests_get
       security:
       - HTTPBearer: []
@@ -1415,7 +2823,7 @@ paths:
     get:
       tags:
       - Request Log Retention
-      summary: 管理员查询单条调用日志
+      summary: 管理员查询单条操作日志
       description: 管理员按 Request ID 查询脱敏详情，包括已删除项目的历史记录。
       operationId: get_any_request_api_admin_v1_requests_logs__request_id__get
       security:
@@ -1582,6 +2990,13 @@ components:
           type: string
           format: uuid
           title: Project Id
+        created_by_user_id:
+          type: string
+          format: uuid
+          title: Created By User Id
+        created_by_username:
+          type: string
+          title: Created By Username
         name:
           type: string
           title: Name
@@ -1594,7 +3009,7 @@ components:
         secret:
           type: string
           title: Secret
-          description: 完整 Key；项目 owner/editor 之后仍可查看。
+          description: 完整 Key；仅创建者之后可查看。
         status:
           type: string
           enum:
@@ -1628,6 +3043,8 @@ components:
       required:
       - id
       - project_id
+      - created_by_user_id
+      - created_by_username
       - name
       - key_prefix
       - key_last_four
@@ -1648,6 +3065,13 @@ components:
           type: string
           format: uuid
           title: Project Id
+        created_by_user_id:
+          type: string
+          format: uuid
+          title: Created By User Id
+        created_by_username:
+          type: string
+          title: Created By Username
         name:
           type: string
           title: Name
@@ -1696,6 +3120,8 @@ components:
       required:
       - id
       - project_id
+      - created_by_user_id
+      - created_by_username
       - name
       - key_prefix
       - key_last_four
@@ -1885,6 +3311,103 @@ components:
       - content
       title: ChatMessageRequest
       description: 兼容 Chat Completions 的消息，允许 tool 和多模态等扩展字段。
+    ContextPermissionResponse:
+      properties:
+        can_read_user_data:
+          type: boolean
+          title: Can Read User Data
+          description: 是否可查询短期记忆、长期记忆和画像。
+        can_edit:
+          type: boolean
+          title: Can Edit
+          description: 是否可修改模板或用户上下文数据。管理员始终为 false。
+      type: object
+      required:
+      - can_read_user_data
+      - can_edit
+      title: ContextPermissionResponse
+    ContextProfileResponse:
+      properties:
+        profile:
+          additionalProperties: true
+          type: object
+          title: Profile
+          description: 项目自定义 JSON 画像；不存在时为空对象。
+        version:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Version
+          description: 当前画像版本；未创建时为空。
+      type: object
+      required:
+      - profile
+      - version
+      title: ContextProfileResponse
+    ContextProjectPageResponse:
+      properties:
+        items:
+          items:
+            $ref: '#/components/schemas/ContextProjectResponse'
+          type: array
+          title: Items
+          description: 当前页可访问项目。
+        total:
+          type: integer
+          title: Total
+          description: 全部匹配项目数。
+        offset:
+          type: integer
+          title: Offset
+          description: 本页偏移量。
+        limit:
+          type: integer
+          title: Limit
+          description: 本页条数上限。
+      type: object
+      required:
+      - items
+      - total
+      - offset
+      - limit
+      title: ContextProjectPageResponse
+    ContextProjectResponse:
+      properties:
+        id:
+          type: string
+          format: uuid
+          title: Id
+          description: 项目 ID。
+        name:
+          type: string
+          title: Name
+          description: 项目名称。
+        description:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Description
+          description: 项目描述。
+        visibility:
+          type: string
+          enum:
+          - public
+          - private
+          title: Visibility
+          description: 项目可见性。
+        owner_id:
+          type: string
+          format: uuid
+          title: Owner Id
+          description: 项目所有者 ID。
+      type: object
+      required:
+      - id
+      - name
+      - description
+      - visibility
+      - owner_id
+      title: ContextProjectResponse
     CreateProviderRequest:
       properties:
         name:
@@ -1985,6 +3508,121 @@ components:
       - password
       title: LoginRequest
       description: 统一用户登录请求。
+    LongTermMemoryUpdate:
+      properties:
+        content:
+          type: string
+          maxLength: 20000
+          minLength: 1
+          title: Content
+          description: 从对话中提炼、跨会话仍有价值的一条记忆文本。
+          examples:
+          - 用户偏好简洁的中文回答。
+        tags:
+          items:
+            type: string
+          type: array
+          maxItems: 20
+          title: Tags
+          examples:
+          - - 偏好
+            - 表达方式
+        metadata:
+          additionalProperties: true
+          type: object
+          title: Metadata
+          description: 调用方自定义的来源、置信度等元数据。
+          examples:
+          - confidence: 0.92
+            source: conversation
+        expected_version:
+          type: integer
+          minimum: 1.0
+          title: Expected Version
+      type: object
+      required:
+      - content
+      - expected_version
+      title: LongTermMemoryUpdate
+      examples:
+      - content: 用户偏好简洁的中文回答。
+        metadata:
+          confidence: 0.92
+          source: conversation
+        tags:
+        - 偏好
+        - 表达方式
+    LongTermMemoryWrite:
+      properties:
+        content:
+          type: string
+          maxLength: 20000
+          minLength: 1
+          title: Content
+          description: 从对话中提炼、跨会话仍有价值的一条记忆文本。
+          examples:
+          - 用户偏好简洁的中文回答。
+        tags:
+          items:
+            type: string
+          type: array
+          maxItems: 20
+          title: Tags
+          examples:
+          - - 偏好
+            - 表达方式
+        metadata:
+          additionalProperties: true
+          type: object
+          title: Metadata
+          description: 调用方自定义的来源、置信度等元数据。
+          examples:
+          - confidence: 0.92
+            source: conversation
+      type: object
+      required:
+      - content
+      title: LongTermMemoryWrite
+      examples:
+      - content: 用户偏好简洁的中文回答。
+        metadata:
+          confidence: 0.92
+          source: conversation
+        tags:
+        - 偏好
+        - 表达方式
+    ProfileWrite:
+      properties:
+        profile:
+          additionalProperties: true
+          type: object
+          title: Profile
+          description: 接入项目自行定义的用户画像 JSON 对象，网关不规定字段。
+          examples:
+          - interests:
+            - 旅行
+            - 摄影
+            preferred_language: zh-CN
+        expected_version:
+          anyOf:
+          - type: integer
+            minimum: 1.0
+          - type: 'null'
+          title: Expected Version
+          description: 更新已有画像时填写读取到的版本；首次创建时省略。
+          examples:
+          - 1
+      type: object
+      required:
+      - profile
+      title: ProfileWrite
+      examples:
+      - expected_version: 1
+        profile:
+          interests:
+          - 旅行
+          - 摄影
+          preferred_language: zh-CN
     ProjectCreateRequest:
       properties:
         name:
@@ -2202,9 +3840,11 @@ components:
           title: Service Code
           description: 服务目录代码。
         monthly_token_limit:
-          type: integer
+          anyOf:
+          - type: integer
+          - type: 'null'
           title: Monthly Token Limit
-          description: 每月 token 上限。
+          description: AI 服务的每月 token 上限；数据服务为 null。
         status:
           type: string
           enum:
@@ -2502,12 +4142,35 @@ components:
         trace_id:
           type: string
           title: Trace Id
+        event_type:
+          type: string
+          enum:
+          - service_call
+          - project_operation
+          title: Event Type
+        actor_user_id:
+          anyOf:
+          - type: string
+            format: uuid
+          - type: 'null'
+          title: Actor User Id
+        actor_username:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Actor Username
         project_id:
           anyOf:
           - type: string
             format: uuid
           - type: 'null'
           title: Project Id
+        api_key_id:
+          anyOf:
+          - type: string
+            format: uuid
+          - type: 'null'
+          title: Api Key Id
         project_name:
           anyOf:
           - type: string
@@ -2545,7 +4208,11 @@ components:
       required:
       - request_id
       - trace_id
+      - event_type
+      - actor_user_id
+      - actor_username
       - project_id
+      - api_key_id
       - project_name
       - service_code
       - status
@@ -2630,6 +4297,213 @@ components:
       - by_day
       title: RequestUsageSummaryResponse
       description: 指定 UTC 时间和项目筛选范围内的调用汇总。
+    ResourceCreateRequest:
+      properties:
+        resource_type:
+          type: string
+          enum:
+          - memory
+          - template
+          title: Resource Type
+          description: 固定资源类型。
+          examples:
+          - template
+        category:
+          type: string
+          enum:
+          - sessions
+          - profiles
+          - longterm
+          - system
+          - user
+          - assistant
+          title: Category
+          description: 固定目录分类。
+          examples:
+          - system
+        name:
+          type: string
+          maxLength: 200
+          minLength: 1
+          title: Name
+          description: 目录内唯一文件名，不含路径。
+          examples:
+          - support-agent
+        content:
+          type: string
+          maxLength: 100000
+          title: Content
+          description: 用户主动保存的资源正文，最多 100,000 字符。
+          examples:
+          - 你是一个客服助手。请用{{language}}回答以下问题：{{question}}
+      type: object
+      required:
+      - resource_type
+      - category
+      - name
+      - content
+      title: ResourceCreateRequest
+      description: 新建固定目录内的项目资源。
+      examples:
+      - category: system
+        content: 你是一个客服助手。请用{{language}}回答以下问题：{{question}}
+        name: support-agent
+        resource_type: template
+    ResourceDirectoryResponse:
+      properties:
+        resource_type:
+          type: string
+          title: Resource Type
+          description: 资源类型：memory 或 template。
+        category:
+          type: string
+          title: Category
+          description: 固定目录代码，不是文件系统路径。
+        label:
+          type: string
+          title: Label
+          description: 用于界面展示的目录名称。
+      type: object
+      required:
+      - resource_type
+      - category
+      - label
+      title: ResourceDirectoryResponse
+      description: 固定目录中一项不可变分类。
+    ResourceErrorDetail:
+      properties:
+        code:
+          type: string
+          title: Code
+          description: 机器可读错误码，例如 version_conflict。
+        message:
+          type: string
+          title: Message
+          description: 可展示给用户的错误原因。
+      type: object
+      required:
+      - code
+      - message
+      title: ResourceErrorDetail
+      description: 资源 API 稳定错误码和用户可读原因。
+    ResourceErrorResponse:
+      properties:
+        detail:
+          $ref: '#/components/schemas/ResourceErrorDetail'
+          description: 结构化错误详情。
+      type: object
+      required:
+      - detail
+      title: ResourceErrorResponse
+      description: 资源 API 错误响应结构。
+    ResourceResponse:
+      properties:
+        id:
+          type: string
+          format: uuid
+          title: Id
+          description: 稳定资源 ID。
+        project_id:
+          type: string
+          format: uuid
+          title: Project Id
+          description: 所属项目 ID。
+        resource_type:
+          type: string
+          enum:
+          - memory
+          - template
+          title: Resource Type
+          description: 固定资源类型。
+        category:
+          type: string
+          enum:
+          - sessions
+          - profiles
+          - longterm
+          - system
+          - user
+          - assistant
+          title: Category
+          description: 固定目录分类。
+        name:
+          type: string
+          title: Name
+          description: 文件名。
+        content:
+          type: string
+          title: Content
+          description: 资源正文；与网关调用日志分离。
+        version:
+          type: integer
+          title: Version
+          description: 每次成功修改或删除后递增的版本号。
+        created_by:
+          type: string
+          format: uuid
+          title: Created By
+          description: 创建者用户 ID。
+        updated_by:
+          type: string
+          format: uuid
+          title: Updated By
+          description: 最近修改者用户 ID。
+        created_at:
+          type: string
+          format: date-time
+          title: Created At
+          description: 创建时间。
+        updated_at:
+          type: string
+          format: date-time
+          title: Updated At
+          description: 最近更新时间。
+      type: object
+      required:
+      - id
+      - project_id
+      - resource_type
+      - category
+      - name
+      - content
+      - version
+      - created_by
+      - updated_by
+      - created_at
+      - updated_at
+      title: ResourceResponse
+      description: 项目资源及其版本和审计字段。
+    ResourceUpdateRequest:
+      properties:
+        expected_version:
+          type: integer
+          minimum: 1.0
+          title: Expected Version
+          description: 最近读取的资源版本；过期时返回 409。
+          examples:
+          - 1
+        name:
+          type: string
+          maxLength: 200
+          minLength: 1
+          title: Name
+          description: 更新后的文件名。
+          examples:
+          - support-agent
+        content:
+          type: string
+          maxLength: 100000
+          title: Content
+          description: 更新后的正文，最多 100,000 字符。
+          examples:
+          - 你是一个专业的客服助手。回答时保持简洁。
+      type: object
+      required:
+      - expected_version
+      - name
+      - content
+      title: ResourceUpdateRequest
+      description: 使用乐观锁更新资源名称与正文。
     RetentionRunResponse:
       properties:
         id:
@@ -2678,14 +4552,15 @@ components:
           title: Service Code
           description: 要申请的服务目录代码。
         monthly_token_limit:
-          type: integer
-          minimum: 1.0
+          anyOf:
+          - type: integer
+            minimum: 1.0
+          - type: 'null'
           title: Monthly Token Limit
-          description: 分配给本项目的月度 token 上限；不能超过 owner 的个人可分配额度。
+          description: AI 推理服务的项目月度 token 上限；数据服务不提供此字段。
       type: object
       required:
       - service_code
-      - monthly_token_limit
       title: ServiceApplicationRequest
     ServiceCatalogResponse:
       properties:
@@ -2703,13 +4578,268 @@ components:
           type: array
           title: Models
           description: 此服务包含的模型标识。
+        quota_unit:
+          anyOf:
+          - type: string
+            const: tokens
+          - type: 'null'
+          title: Quota Unit
+          description: AI 推理服务的计量单位；null 表示数据服务不占用 AI 推理额度。
       type: object
       required:
       - code
       - name
       - models
+      - quota_unit
       title: ServiceCatalogResponse
       description: 目前可申请的服务目录项。
+    ServiceProjectPageResponse:
+      properties:
+        items:
+          items:
+            $ref: '#/components/schemas/ServiceProjectResponse'
+          type: array
+          title: Items
+        total:
+          type: integer
+          title: Total
+        offset:
+          type: integer
+          title: Offset
+        limit:
+          type: integer
+          title: Limit
+      type: object
+      required:
+      - items
+      - total
+      - offset
+      - limit
+      title: ServiceProjectPageResponse
+    ServiceProjectResponse:
+      properties:
+        id:
+          type: string
+          format: uuid
+          title: Id
+        name:
+          type: string
+          title: Name
+        description:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Description
+        visibility:
+          type: string
+          enum:
+          - public
+          - private
+          title: Visibility
+        owner_id:
+          type: string
+          format: uuid
+          title: Owner Id
+        service_code:
+          type: string
+          title: Service Code
+        monthly_token_limit:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Monthly Token Limit
+        service_status:
+          type: string
+          enum:
+          - active
+          - suspended
+          title: Service Status
+        tokens_used:
+          type: integer
+          title: Tokens Used
+        tokens_reserved:
+          type: integer
+          title: Tokens Reserved
+      type: object
+      required:
+      - id
+      - name
+      - description
+      - visibility
+      - owner_id
+      - service_code
+      - monthly_token_limit
+      - service_status
+      - tokens_used
+      - tokens_reserved
+      title: ServiceProjectResponse
+      description: 当前用户可访问且已开通指定服务的项目。
+    SessionMemoryWrite:
+      properties:
+        value:
+          title: Value
+          description: 兼容接口中的短期 JSON 值；新对话历史请使用 /messages。
+          examples:
+          - language: zh-CN
+            step: collecting_preferences
+        ttl_seconds:
+          type: integer
+          maximum: 2592000.0
+          minimum: 60.0
+          title: Ttl Seconds
+          default: 86400
+          examples:
+          - 86400
+      type: object
+      required:
+      - value
+      title: SessionMemoryWrite
+    SessionMessageInput:
+      properties:
+        role:
+          type: string
+          enum:
+          - system
+          - user
+          - assistant
+          - tool
+          title: Role
+          description: OpenAI Chat Completions 消息角色。
+          examples:
+          - user
+        content:
+          type: string
+          maxLength: 20000
+          minLength: 1
+          title: Content
+          description: 本条消息的文本正文。
+          examples:
+          - 我喜欢简洁的中文回答。
+        metadata:
+          additionalProperties: true
+          type: object
+          title: Metadata
+          description: 可选扩展字段，例如 tool_call_id；不参与网关解释。
+          examples:
+          - {}
+      type: object
+      required:
+      - role
+      - content
+      title: SessionMessageInput
+    SessionMessageResponse:
+      properties:
+        role:
+          type: string
+          enum:
+          - system
+          - user
+          - assistant
+          - tool
+          title: Role
+          description: OpenAI Chat Completions 消息角色。
+          examples:
+          - user
+        content:
+          type: string
+          maxLength: 20000
+          minLength: 1
+          title: Content
+          description: 本条消息的文本正文。
+          examples:
+          - 我喜欢简洁的中文回答。
+        metadata:
+          additionalProperties: true
+          type: object
+          title: Metadata
+          description: 可选扩展字段，例如 tool_call_id；不参与网关解释。
+          examples:
+          - {}
+        id:
+          type: string
+          format: uuid
+          title: Id
+          description: 网关生成的消息 ID。
+        sequence:
+          type: integer
+          title: Sequence
+          description: 数据库生成的全局递增顺序值；同一会话按此字段排序。
+        expires_at:
+          type: string
+          format: date-time
+          title: Expires At
+          description: 此消息的过期时间（UTC）。
+      type: object
+      required:
+      - role
+      - content
+      - id
+      - sequence
+      - expires_at
+      title: SessionMessageResponse
+    SessionMessagesResponse:
+      properties:
+        project_id:
+          type: string
+          format: uuid
+          title: Project Id
+          description: 由 Bearer 项目 API Key 确定的项目 ID。
+        external_user_id:
+          type: string
+          title: External User Id
+          description: 调用方系统中的用户标识。
+        session_id:
+          type: string
+          title: Session Id
+          description: 调用方系统中的会话标识。
+        messages:
+          items:
+            $ref: '#/components/schemas/SessionMessageResponse'
+          type: array
+          title: Messages
+          description: 按会话顺序返回的最近消息。
+      type: object
+      required:
+      - project_id
+      - external_user_id
+      - session_id
+      - messages
+      title: SessionMessagesResponse
+    SessionMessagesWrite:
+      properties:
+        messages:
+          items:
+            $ref: '#/components/schemas/SessionMessageInput'
+          type: array
+          maxItems: 100
+          minItems: 1
+          title: Messages
+          description: 按数组顺序追加到会话的消息，单次最多 100 条。
+          examples:
+          - - content: 我喜欢简洁的中文回答。
+              role: user
+            - content: 好的，我会尽量简洁地用中文回答。
+              role: assistant
+        ttl_seconds:
+          type: integer
+          maximum: 2592000.0
+          minimum: 60.0
+          title: Ttl Seconds
+          description: 本次追加消息的存活时间，范围 60 秒到 30 天。
+          default: 86400
+          examples:
+          - 86400
+      type: object
+      required:
+      - messages
+      title: SessionMessagesWrite
+      examples:
+      - messages:
+        - content: 我喜欢简洁的中文回答。
+          role: user
+        - content: 好的，我会尽量简洁地用中文回答。
+          role: assistant
+        ttl_seconds: 86400
     SetUserServiceQuotaRequest:
       properties:
         monthly_token_limit:

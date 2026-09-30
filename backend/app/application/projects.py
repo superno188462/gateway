@@ -1,15 +1,15 @@
 """项目和项目成员授权用例。"""
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from uuid import UUID
 
-from sqlalchemy import delete, func, or_, select
+from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import selectinload
 from sqlalchemy.sql.elements import ColumnElement
 
-from app.infrastructure.db.models import Project, ProjectMember, ProjectTag, User
+from app.infrastructure.db.models import ApiKey, Project, ProjectMember, ProjectTag, User
 
 
 class ProjectNotFoundError(RuntimeError):
@@ -138,6 +138,36 @@ class ProjectService:
         async with self._session_factory() as session:
             return await self._require_access(session, project_id, user)
 
+    async def assert_context_access(self, project_id: UUID, user: User, *, write: bool) -> None:
+        """校验控制台上下文查询权限；管理员只读，项目 owner/editor 可读写。"""
+        async with self._session_factory() as session:
+            await self._require_access(session, project_id, user)
+            if user.role == "admin" and not write:
+                return
+            role = await session.scalar(
+                select(ProjectMember.role).where(
+                    ProjectMember.project_id == project_id,
+                    ProjectMember.user_id == user.id,
+                )
+            )
+            if role not in {"owner", "editor"}:
+                raise ProjectForbiddenError("需要项目 owner/editor 权限才能查询或维护上下文记录")
+
+    async def context_permissions(self, project_id: UUID, user: User) -> tuple[bool, bool]:
+        """返回动态上下文的控制台读取和编辑能力；管理员仅获得全局只读。"""
+        async with self._session_factory() as session:
+            await self._require_access(session, project_id, user)
+            role = await session.scalar(
+                select(ProjectMember.role).where(
+                    ProjectMember.project_id == project_id,
+                    ProjectMember.user_id == user.id,
+                )
+            )
+            can_edit = role in {"owner", "editor"}
+            if can_edit:
+                return True, True
+            return user.role == "admin", False
+
     async def update(
         self,
         project_id: UUID,
@@ -235,7 +265,9 @@ class ProjectService:
                 updated_at=member.updated_at,
             )
 
-    async def remove_member(self, project_id: UUID, user: User, member_user_id: UUID) -> None:
+    async def remove_member(
+        self, project_id: UUID, user: User, member_user_id: UUID
+    ) -> ProjectMemberInfo:
         async with self._session_factory.begin() as session:
             await self._require_manager(session, project_id, user)
             member = await session.get(ProjectMember, (project_id, member_user_id))
@@ -243,12 +275,25 @@ class ProjectService:
                 raise ProjectNotFoundError("项目成员不存在")
             if member.role == "owner":
                 raise ProjectConflictError("不能移除项目所有者")
+            target = await session.get(User, member_user_id)
+            if target is None:
+                raise UserNotFoundError("用户不存在")
+            result = ProjectMemberInfo(
+                project_id=member.project_id,
+                user_id=member.user_id,
+                username=target.username,
+                role=member.role,
+                created_at=member.created_at,
+                updated_at=member.updated_at,
+            )
             await session.execute(
                 delete(ProjectMember).where(
                     ProjectMember.project_id == project_id,
                     ProjectMember.user_id == member_user_id,
                 )
             )
+            await self._revoke_member_keys(session, project_id, member_user_id)
+            return result
 
     async def update_member_role(
         self,
@@ -269,6 +314,8 @@ class ProjectService:
             if target is None:
                 raise UserNotFoundError("用户不存在")
             member.role = role
+            if role == "viewer":
+                await self._revoke_member_keys(session, project_id, member_user_id)
             await session.flush()
             await session.refresh(member)
             return ProjectMemberInfo(
@@ -279,6 +326,21 @@ class ProjectService:
                 created_at=member.created_at,
                 updated_at=member.updated_at,
             )
+
+    @staticmethod
+    async def _revoke_member_keys(
+        session: AsyncSession, project_id: UUID, member_user_id: UUID
+    ) -> None:
+        """Revoke a member's personal keys atomically with membership changes."""
+        await session.execute(
+            update(ApiKey)
+            .where(
+                ApiKey.project_id == project_id,
+                ApiKey.created_by_user_id == member_user_id,
+                ApiKey.status == "active",
+            )
+            .values(status="revoked", revoked_at=datetime.now(UTC))
+        )
 
     async def _get_project(self, session: AsyncSession, project_id: UUID) -> Project:
         result = await session.execute(

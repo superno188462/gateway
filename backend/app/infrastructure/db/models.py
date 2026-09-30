@@ -7,9 +7,11 @@ from uuid import UUID, uuid4
 
 from sqlalchemy import (
     JSON,
+    BigInteger,
     CheckConstraint,
     DateTime,
     ForeignKey,
+    Identity,
     Index,
     Integer,
     String,
@@ -167,6 +169,166 @@ class ProjectMember(Base):
     )
 
 
+class ProjectResource(Base):
+    """项目内显式保存的提示词模板或记忆文档。"""
+
+    __tablename__ = "resources"
+    __table_args__ = (
+        CheckConstraint(
+            "(resource_type = 'memory' AND category IN ('sessions', 'profiles', 'longterm')) "
+            "OR (resource_type = 'template' AND category IN ('system', 'user', 'assistant'))",
+            name="ck_resources_fixed_directory",
+        ),
+        CheckConstraint("version >= 1", name="ck_resources_version"),
+        Index(
+            "uq_resources_active_name",
+            "project_id",
+            "resource_type",
+            "category",
+            "name",
+            unique=True,
+            postgresql_where=text("deleted_at IS NULL"),
+        ),
+        Index("ix_resources_project_directory", "project_id", "resource_type", "category"),
+    )
+
+    id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), primary_key=True, default=uuid4)
+    project_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("projects.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    resource_type: Mapped[str] = mapped_column(String(20), nullable=False)
+    category: Mapped[str] = mapped_column(String(30), nullable=False)
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    version: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1")
+    created_by: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
+    )
+    updated_by: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
+    )
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+
+class ProjectSessionMemory(Base):
+    """按项目、外部用户、会话和键隔离的短期上下文值。"""
+
+    __tablename__ = "project_session_memories"
+    __table_args__ = (
+        UniqueConstraint(
+            "project_id",
+            "external_user_id",
+            "session_id",
+            "memory_key",
+            name="uq_session_memory_key",
+        ),
+        Index("ix_session_memory_expiry", "expires_at"),
+    )
+
+    id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), primary_key=True, default=uuid4)
+    project_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
+    )
+    external_user_id: Mapped[str] = mapped_column(String(200), nullable=False)
+    session_id: Mapped[str] = mapped_column(String(200), nullable=False)
+    memory_key: Mapped[str] = mapped_column(String(100), nullable=False)
+    value_json: Mapped[str] = mapped_column(Text, nullable=False)
+    version: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1")
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+
+class ProjectSessionMessage(Base):
+    """按项目、外部用户和会话顺序保存的短期对话消息。"""
+
+    __tablename__ = "project_session_messages"
+    __table_args__ = (
+        CheckConstraint(
+            "role IN ('system', 'user', 'assistant', 'tool')", name="ck_session_messages_role"
+        ),
+        Index(
+            "ix_session_messages_scope_sequence",
+            "project_id",
+            "external_user_id",
+            "session_id",
+            "sequence",
+        ),
+        Index("ix_session_messages_expiry", "expires_at"),
+    )
+
+    id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), primary_key=True, default=uuid4)
+    project_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
+    )
+    external_user_id: Mapped[str] = mapped_column(String(200), nullable=False)
+    session_id: Mapped[str] = mapped_column(String(200), nullable=False)
+    sequence: Mapped[int] = mapped_column(BigInteger, Identity(), unique=True, nullable=False)
+    role: Mapped[str] = mapped_column(String(20), nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    metadata_json: Mapped[dict[str, object]] = mapped_column(JSON, nullable=False, default=dict)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class ProjectLongTermMemory(Base):
+    """项目内以外部用户为边界的长期记忆条目。"""
+
+    __tablename__ = "project_long_term_memories"
+    __table_args__ = (
+        Index("ix_long_term_memory_project_user", "project_id", "external_user_id", "created_at"),
+    )
+
+    id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), primary_key=True, default=uuid4)
+    project_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
+    )
+    external_user_id: Mapped[str] = mapped_column(String(200), nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    tags: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    metadata_json: Mapped[dict[str, object]] = mapped_column(JSON, nullable=False, default=dict)
+    version: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1")
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+
+class ProjectUserProfile(Base):
+    """项目内每个外部用户一份可版本化的结构化画像。"""
+
+    __tablename__ = "project_user_profiles"
+
+    project_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("projects.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    external_user_id: Mapped[str] = mapped_column(String(200), primary_key=True)
+    profile: Mapped[dict[str, object]] = mapped_column(JSON, nullable=False, default=dict)
+    version: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1")
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+
 class ApiKey(Base):
     """项目 API Key；校验摘要与可逆密文分别保存，密钥不以明文落库。"""
 
@@ -180,6 +342,11 @@ class ApiKey(Base):
     project_id: Mapped[UUID] = mapped_column(
         PostgreSQLUUID(as_uuid=True),
         ForeignKey("projects.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    created_by_user_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
         nullable=False,
     )
     name: Mapped[str] = mapped_column(String(100), nullable=False)
@@ -204,7 +371,10 @@ class ProjectServiceSubscription(Base):
         CheckConstraint(
             "status IN ('active', 'suspended')", name="ck_service_subscriptions_status"
         ),
-        CheckConstraint("monthly_token_limit > 0", name="ck_service_subscriptions_token_limit"),
+        CheckConstraint(
+            "monthly_token_limit IS NULL OR monthly_token_limit > 0",
+            name="ck_service_subscriptions_token_limit",
+        ),
     )
 
     project_id: Mapped[UUID] = mapped_column(
@@ -213,7 +383,7 @@ class ProjectServiceSubscription(Base):
         primary_key=True,
     )
     service_code: Mapped[str] = mapped_column(String(50), primary_key=True)
-    monthly_token_limit: Mapped[int] = mapped_column(nullable=False)
+    monthly_token_limit: Mapped[int | None] = mapped_column(nullable=True)
     status: Mapped[str] = mapped_column(String(20), nullable=False, server_default="active")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
@@ -251,7 +421,7 @@ class ServiceUsageBucket(Base):
 
 
 class GatewayRequest(Base):
-    """不含提示词或回复正文的网关调用记录。"""
+    """不含敏感正文的服务调用与项目操作记录。"""
 
     __tablename__ = "gateway_requests"
     __table_args__ = (
@@ -266,6 +436,13 @@ class GatewayRequest(Base):
     trace_id: Mapped[str] = mapped_column(
         String(64), nullable=False, default=lambda: f"trace_{uuid4().hex}"
     )
+    event_type: Mapped[str] = mapped_column(
+        String(30), nullable=False, default="service_call", server_default="service_call"
+    )
+    actor_user_id: Mapped[UUID | None] = mapped_column(
+        PostgreSQLUUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL")
+    )
+    actor_username: Mapped[str | None] = mapped_column(String(100))
     project_id: Mapped[UUID | None] = mapped_column(PostgreSQLUUID(as_uuid=True))
     api_key_id: Mapped[UUID | None] = mapped_column(PostgreSQLUUID(as_uuid=True))
     service_code: Mapped[str] = mapped_column(String(50), nullable=False)
