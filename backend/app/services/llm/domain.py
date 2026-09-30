@@ -1,5 +1,6 @@
 """LLM Provider 边界和与厂商无关的数据类型。"""
 
+from collections.abc import AsyncGenerator
 from dataclasses import dataclass, field
 from typing import Protocol
 
@@ -49,6 +50,15 @@ class ProviderCompletion:
     raw_response: dict[str, object] | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class ProviderStreamEvent:
+    """上游流状态或数据帧；头就绪、普通 SSE 帧和 [DONE] 通过标志区分。"""
+
+    data: dict[str, object] | None
+    headers_received: bool = False
+    done: bool = False
+
+
 class LlmProvider(Protocol):
     """可替换的聊天模型 Provider 端口。"""
 
@@ -64,3 +74,15 @@ class LlmProvider(Protocol):
         parameters: dict[str, object] | None = None,
     ) -> ProviderCompletion:
         """生成聊天结果；保留兼容参数，并返回本次调用的 token 用量。"""
+        ...
+
+    def stream(
+        self,
+        model: str,
+        messages: list[ChatMessage],
+        max_tokens: int,
+        parameters: dict[str, object] | None = None,
+        request_id: str | None = None,
+    ) -> AsyncGenerator[ProviderStreamEvent, None]:
+        """逐帧读取 OpenAI SSE；首帧前的连接或状态错误允许切换上游。"""
+        ...

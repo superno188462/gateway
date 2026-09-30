@@ -93,7 +93,17 @@ class AppContainer:
         session_factory = async_sessionmaker(database_engine, expire_on_commit=False)
         password_service = PasswordService()
         jwt_service = JwtService(settings.jwt_secret_key, settings.jwt_access_token_expire_minutes)
-        http_client = httpx.AsyncClient(timeout=httpx.Timeout(60.0, connect=10.0))
+        http_client = httpx.AsyncClient(
+            timeout=httpx.Timeout(60.0, connect=10.0),
+            # Keep the gateway's provider egress direct during network-path diagnosis.
+            trust_env=False,
+            limits=httpx.Limits(
+                max_connections=100,
+                max_keepalive_connections=20,
+                # Keep idle TLS sessions warm across ordinary pauses between requests.
+                keepalive_expiry=60.0,
+            ),
+        )
         llm_configuration_service = LlmConfigurationService(
             session_factory,
             ProviderSecretCipher(settings.llm_provider_secret_key.get_secret_value())

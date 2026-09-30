@@ -1,7 +1,12 @@
 """OpenAI Chat Completions 兼容协议适配器。"""
 
+import json
 import logging
-from typing import cast
+import time
+from collections.abc import AsyncGenerator
+from typing import Any, cast
+from urllib.parse import urlsplit
+from urllib.request import getproxies, proxy_bypass
 
 import httpx
 
@@ -11,6 +16,7 @@ from app.services.llm.domain import (
     LlmProvider,
     ProviderCallError,
     ProviderCompletion,
+    ProviderStreamEvent,
 )
 from app.services.llm.providers.mock import MockLlmProvider, estimate_tokens
 
@@ -27,6 +33,7 @@ class ConfiguredLlmProvider(LlmProvider):
     ) -> None:
         self._configuration = configuration
         self._http_client = http_client
+        self._trust_env = bool(getattr(http_client, "_trust_env", True))
         self._mock = MockLlmProvider()
 
     async def supports(self, model: str) -> bool:
@@ -124,6 +131,319 @@ class ConfiguredLlmProvider(LlmProvider):
                     resolved.connection_name or "unnamed",
                     failure_type,
                 )
+        raise self._call_error(None, attempts)
+
+    async def _mock_stream(
+        self,
+        model: str,
+        messages: list[ChatMessage],
+        max_tokens: int,
+        parameters: dict[str, object] | None,
+    ) -> AsyncGenerator[ProviderStreamEvent, None]:
+        """让内置 Mock 也按小块输出，以便本地验证真实 SSE 生命周期。"""
+        completion = await self._mock.complete(model, messages, max_tokens, parameters)
+        yield ProviderStreamEvent(None, headers_received=True)
+        yield ProviderStreamEvent(
+            {
+                "id": "mock",
+                "object": "chat.completion.chunk",
+                "choices": [{"index": 0, "delta": {"role": "assistant"}, "finish_reason": None}],
+            }
+        )
+        for start in range(0, len(completion.content), 12):
+            yield ProviderStreamEvent(
+                {
+                    "id": "mock",
+                    "object": "chat.completion.chunk",
+                    "choices": [
+                        {
+                            "index": 0,
+                            "delta": {"content": completion.content[start : start + 12]},
+                            "finish_reason": None,
+                        }
+                    ],
+                }
+            )
+        finish_chunk: dict[str, object] = {
+            "id": "mock",
+            "object": "chat.completion.chunk",
+            "choices": [{"index": 0, "delta": {}, "finish_reason": completion.finish_reason}],
+        }
+        options = (parameters or {}).get("stream_options")
+        if isinstance(options, dict) and options.get("include_usage") is True:
+            finish_chunk["usage"] = {
+                "prompt_tokens": completion.prompt_tokens,
+                "completion_tokens": completion.completion_tokens,
+                "total_tokens": completion.prompt_tokens + completion.completion_tokens,
+            }
+        yield ProviderStreamEvent(finish_chunk)
+        yield ProviderStreamEvent(None, done=True)
+
+    async def stream(
+        self,
+        model: str,
+        messages: list[ChatMessage],
+        max_tokens: int,
+        parameters: dict[str, object] | None = None,
+        request_id: str | None = None,
+    ) -> AsyncGenerator[ProviderStreamEvent, None]:
+        """请求真实上游 SSE 并逐事件转发；仅在产生首事件前允许故障切换。"""
+        if model == "mock-chat":
+            async for event in self._mock_stream(model, messages, max_tokens, parameters):
+                yield event
+            return
+        if self._configuration is None:
+            raise ProviderCallError(
+                "provider_configuration_missing",
+                "LLM 上游配置不可用，请检查服务端密钥配置",
+                {"attempts": []},
+            )
+        routes = await self._configuration.resolve_model_pool(model)
+        if not routes:
+            raise ProviderCallError(
+                "model_route_not_found",
+                "没有可用的上游连接，请检查模型前缀和连接状态",
+                {"attempts": []},
+            )
+        attempts: list[dict[str, object]] = []
+        for route_index, resolved in enumerate(routes, start=1):
+            request_started = time.perf_counter()
+            received_event = False
+            trace_started: dict[str, float] = {}
+            trace_durations: dict[str, list[float]] = {}
+            retry_count = 0
+
+            async def trace_httpcore(
+                name: str,
+                info: dict[str, Any],
+                _trace_started: dict[str, float] = trace_started,
+                _trace_durations: dict[str, list[float]] = trace_durations,
+            ) -> None:
+                """Capture transport phase timings without recording request or credential data."""
+                nonlocal retry_count
+                phase, separator, status = name.rpartition(".")
+                if not separator:
+                    return
+                now = time.perf_counter()
+                if phase.endswith(".retry") and status == "started":
+                    retry_count += 1
+                if status == "started":
+                    _trace_started[phase] = now
+                elif status in {"complete", "failed"}:
+                    started_at = _trace_started.pop(phase, None)
+                    if started_at is not None:
+                        _trace_durations.setdefault(phase, []).append(
+                            (now - started_at) * 1000
+                        )
+
+            proxies = getproxies()
+            proxy_env_configured = bool(proxies.get("https") or proxies.get("all"))
+            upstream_host = urlsplit(resolved.base_url).hostname or ""
+            proxy_bypassed = proxy_env_configured and (
+                not self._trust_env or proxy_bypass(upstream_host)
+            )
+            proxy_used = proxy_env_configured and self._trust_env and not proxy_bypassed
+            try:
+                payload = dict(parameters or {})
+                payload.pop("model", None)
+                payload.pop("messages", None)
+                payload["stream"] = True
+                if not payload.get("max_tokens") and not payload.get("max_completion_tokens"):
+                    payload["max_tokens"] = max_tokens
+                payload["model"] = resolved.upstream_model
+                payload["messages"] = [item.as_payload() for item in messages]
+                thinking = payload.get("thinking")
+                thinking_mode = "unspecified"
+                if isinstance(thinking, dict):
+                    configured_thinking_mode = thinking.get("type")
+                    if isinstance(configured_thinking_mode, str):
+                        thinking_mode = configured_thinking_mode[:50]
+                logger.info(
+                    "upstream_request_profile request_id=%s model=%s stream=true "
+                    "max_tokens=%s max_completion_tokens=%s temperature=%s top_p=%s "
+                    "thinking_type=%s",
+                    request_id or "-",
+                    resolved.upstream_model,
+                    payload.get("max_tokens", "omitted"),
+                    payload.get("max_completion_tokens", "omitted"),
+                    payload.get("temperature", "omitted"),
+                    payload.get("top_p", "omitted"),
+                    thinking_mode,
+                )
+                logger.info(
+                    "upstream_request_start request_id=%s supplier=%s connection=%s "
+                    "model=%s target=%s attempt=%d/%d trust_env=%s "
+                    "proxy_env_configured=%s proxy_used=%s",
+                    request_id or "-",
+                    resolved.supplier_name or "unknown",
+                    resolved.connection_name or "unnamed",
+                    resolved.upstream_model,
+                    f"{resolved.base_url}/chat/completions",
+                    route_index,
+                    len(routes),
+                    self._trust_env,
+                    proxy_env_configured,
+                    proxy_used,
+                )
+                request = self._http_client.build_request(
+                    "POST",
+                    f"{resolved.base_url}/chat/completions",
+                    headers={"Authorization": f"Bearer {resolved.api_key}"},
+                    json=payload,
+                    extensions={"trace": trace_httpcore},
+                )
+                response = await self._http_client.send(request, stream=True)
+                try:
+                    try:
+                        response.raise_for_status()
+                    except httpx.HTTPStatusError:
+                        await response.aread()
+                        raise
+                    logger.info(
+                        "upstream_response_headers request_id=%s supplier=%s connection=%s "
+                        "status=%d duration_ms=%d upstream_request_id=%s attempt=%d/%d",
+                        request_id or "-",
+                        resolved.supplier_name or "unknown",
+                        resolved.connection_name or "unnamed",
+                        response.status_code,
+                        round((time.perf_counter() - request_started) * 1000),
+                        self._upstream_request_id(response) or "-",
+                        route_index,
+                        len(routes),
+                    )
+                    connect_tcp_ms = sum(
+                        duration
+                        for phase, durations in trace_durations.items()
+                        if phase.endswith("connect_tcp")
+                        for duration in durations
+                    )
+                    tls_ms = sum(
+                        duration
+                        for phase, durations in trace_durations.items()
+                        if phase.endswith("start_tls")
+                        for duration in durations
+                    )
+                    send_headers_ms = sum(
+                        duration
+                        for phase, durations in trace_durations.items()
+                        if phase.endswith("send_request_headers")
+                        for duration in durations
+                    )
+                    send_body_ms = sum(
+                        duration
+                        for phase, durations in trace_durations.items()
+                        if phase.endswith("send_request_body")
+                        for duration in durations
+                    )
+                    response_headers_ms = sum(
+                        duration
+                        for phase, durations in trace_durations.items()
+                        if phase.endswith("receive_response_headers")
+                        for duration in durations
+                    )
+                    new_connection = any(
+                        phase.endswith("connect_tcp") for phase in trace_durations
+                    )
+                    total_until_headers_ms = (time.perf_counter() - request_started) * 1000
+                    measured_transport_ms = (
+                        connect_tcp_ms
+                        + tls_ms
+                        + send_headers_ms
+                        + send_body_ms
+                        + response_headers_ms
+                    )
+                    pool_and_runtime_overhead_ms = max(
+                        0.0, total_until_headers_ms - measured_transport_ms
+                    )
+                    logger.info(
+                        "upstream_transport_timing request_id=%s connection_reused=%s "
+                        "dns_ms=not_separately_exposed dns_tcp_ms=%.1f tls_ms=%.1f "
+                        "send_headers_ms=%.1f send_body_ms=%.1f "
+                        "response_headers_ms=%.1f retries=%d "
+                        "trust_env=%s proxy_env_configured=%s proxy_bypassed=%s proxy_used=%s "
+                        "pool_wait_ms=unavailable "
+                        "pool_and_runtime_overhead_ms=%.1f",
+                        request_id or "-",
+                        not new_connection,
+                        connect_tcp_ms,
+                        tls_ms,
+                        send_headers_ms,
+                        send_body_ms,
+                        response_headers_ms,
+                        retry_count,
+                        self._trust_env,
+                        proxy_env_configured,
+                        proxy_bypassed,
+                        proxy_used,
+                        pool_and_runtime_overhead_ms,
+                    )
+                    yield ProviderStreamEvent(None, headers_received=True)
+                    async for line in response.aiter_lines():
+                        if not line.startswith("data:"):
+                            continue
+                        data = line[5:].strip()
+                        if data == "[DONE]":
+                            received_event = True
+                            yield ProviderStreamEvent(None, done=True)
+                            return
+                        if not data:
+                            continue
+                        try:
+                            decoded = json.loads(data)
+                        except json.JSONDecodeError as error:
+                            raise httpx.RemoteProtocolError("上游返回无效 SSE JSON") from error
+                        if not isinstance(decoded, dict):
+                            continue
+                        if not received_event:
+                            received_event = True
+                            logger.info(
+                                "upstream_first_chunk request_id=%s supplier=%s connection=%s "
+                                "duration_ms=%d",
+                                request_id or "-",
+                                resolved.supplier_name or "unknown",
+                                resolved.connection_name or "unnamed",
+                                round((time.perf_counter() - request_started) * 1000),
+                            )
+                        yield ProviderStreamEvent(cast(dict[str, object], decoded))
+                finally:
+                    await response.aclose()
+                if not received_event:
+                    raise httpx.RemoteProtocolError("上游流式响应提前结束")
+                return
+            except httpx.HTTPStatusError as error:
+                status_code = error.response.status_code
+                attempt: dict[str, object] = {
+                    "connection_name": resolved.connection_name,
+                    "supplier_name": resolved.supplier_name,
+                    "failure_type": "http_status",
+                    "upstream_status_code": status_code,
+                    "upstream_request_id": self._upstream_request_id(error.response),
+                }
+                provider_error = self._provider_error_code(error.response)
+                if provider_error:
+                    attempt["provider_error"] = provider_error
+                attempts.append(attempt)
+                if (
+                    status_code not in {400, 401, 403, 404, 408, 409, 422, 429}
+                    and status_code < 500
+                ):
+                    raise self._call_error(status_code, attempts) from error
+            except httpx.RequestError as error:
+                attempts.append(
+                    {
+                        "connection_name": resolved.connection_name,
+                        "supplier_name": resolved.supplier_name,
+                        "failure_type": "timeout"
+                        if isinstance(error, httpx.TimeoutException)
+                        else "connection_error"
+                        if isinstance(error, httpx.ConnectError)
+                        else "protocol_error",
+                    }
+                )
+                if received_event:
+                    raise self._call_error(None, attempts) from error
+            if received_event:
+                raise self._call_error(None, attempts)
         raise self._call_error(None, attempts)
 
     @staticmethod

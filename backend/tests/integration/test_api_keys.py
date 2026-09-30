@@ -86,7 +86,10 @@ async def test_project_key_lifecycle_and_owner_boundary() -> None:
         assert listed[0].key_last_four == created.secret[-4:]
         assert listed[0].secret == created.secret
         assert await service.verify(created.secret) == VerifiedApiKey(
-            id=created.info.id, project_id=created.info.project_id, name=created.info.name
+            id=created.info.id,
+            project_id=created.info.project_id,
+            owner_id=owner_id,
+            name=created.info.name,
         )
 
         app = create_app(

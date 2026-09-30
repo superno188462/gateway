@@ -35,19 +35,39 @@ class GatewayRequestRecorder:
     ) -> None:
         """认证项目 Key 后、检查额度和调用服务前，先持久化请求与 Trace ID。"""
         async with self._session_factory.begin() as session:
-            session.add(
-                GatewayRequest(
-                    request_id=request_id,
-                    trace_id=request_id,
-                    project_id=project_id,
-                    api_key_id=api_key_id,
-                    service_code=service_code,
-                    status="received",
-                    audit_result="allowed",
-                    audit_steps={"authentication": {"result": "allowed"}},
-                    description=description,
-                )
+            await self.start_in_session(
+                session,
+                request_id=request_id,
+                project_id=project_id,
+                api_key_id=api_key_id,
+                service_code=service_code,
+                description=description,
             )
+
+    async def start_in_session(
+        self,
+        session: AsyncSession,
+        *,
+        request_id: str,
+        project_id: UUID,
+        api_key_id: UUID,
+        service_code: str,
+        description: str | None = None,
+    ) -> None:
+        """在调用方事务中创建请求记录，以便与服务专属元数据一起提交。"""
+        session.add(
+            GatewayRequest(
+                request_id=request_id,
+                trace_id=request_id,
+                project_id=project_id,
+                api_key_id=api_key_id,
+                service_code=service_code,
+                status="received",
+                audit_result="allowed",
+                audit_steps={"authentication": {"result": "allowed"}},
+                description=description,
+            )
+        )
 
     async def record_auth_rejection(
         self,
@@ -112,6 +132,21 @@ class GatewayRequestRecorder:
         if outcome == "denied":
             record.audit_result = "denied"
         elif outcome in {"allowed", "succeeded"} and record.audit_result != "denied":
+            record.audit_result = "allowed"
+
+    async def record_stages_in_session(
+        self,
+        session: AsyncSession,
+        request_id: str,
+        stages: dict[AuditStage, AuditOutcome],
+    ) -> None:
+        """在同一事务中一次性追加多个阶段，避免重复查询和锁定请求记录。"""
+        record = await self._get_record(session, request_id)
+        record.audit_steps = {
+            **record.audit_steps,
+            **{stage: {"result": outcome} for stage, outcome in stages.items()},
+        }
+        if record.audit_result != "denied":
             record.audit_result = "allowed"
 
     async def finish(

@@ -1,5 +1,6 @@
 """OpenAI 兼容 Provider 把模型请求映射并归一化响应。"""
 
+import asyncio
 import json
 
 import httpx
@@ -273,3 +274,101 @@ async def test_openai_compatible_provider_keeps_mock_available() -> None:
         result = await provider.complete("mock-chat", [ChatMessage("user", "hi")], 30)
 
     assert result.content.startswith("[Mock LLM]")
+
+
+@pytest.mark.asyncio
+async def test_provider_streams_first_sse_frame_before_upstream_finishes() -> None:
+    release_stream = asyncio.Event()
+    seen: dict[str, object] = {}
+
+    class DelayedSseBody(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            yield (
+                b'data: {"id":"upstream-id","model":"vendor-model",'
+                b'"choices":[{"index":0,"delta":{"content":"first"},'
+                b'"finish_reason":null}]}\n\n'
+            )
+            await release_stream.wait()
+            yield b"data: [DONE]\n\n"
+
+        async def aclose(self) -> None:
+            return None
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["payload"] = json.loads(request.read())
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/event-stream"},
+            stream=DelayedSseBody(),
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        provider = ConfiguredLlmProvider(FakeConfiguration(), client)  # type: ignore[arg-type]
+        stream = provider.stream(
+            "public-chat",
+            [ChatMessage("user", "hello")],
+            20,
+            {"temperature": 0.3},
+            request_id="trace-stream-test",
+        )
+        headers = await asyncio.wait_for(anext(stream), timeout=1)
+        first = await asyncio.wait_for(anext(stream), timeout=1)
+        assert headers.headers_received is True
+        assert first.data is not None
+        payload = seen["payload"]
+        assert isinstance(payload, dict)
+        assert payload["stream"] is True
+        first_choices = first.data["choices"]
+        assert isinstance(first_choices, list)
+        assert first_choices[0]["delta"]["content"] == "first"  # type: ignore[index]
+
+        release_stream.set()
+        done = await anext(stream)
+        assert done.done is True
+        await stream.aclose()
+
+
+@pytest.mark.asyncio
+async def test_provider_logs_transport_phases_and_connection_reuse(caplog) -> None:
+    class TracedTransport(httpx.AsyncBaseTransport):
+        async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+            trace = request.extensions["trace"]
+            for phase in (
+                "http11.connect_tcp",
+                "http11.start_tls",
+                "http11.send_request_headers",
+                "http11.send_request_body",
+                "http11.receive_response_headers",
+            ):
+                await trace(f"{phase}.started", {})
+                await trace(f"{phase}.complete", {})
+            return httpx.Response(
+                200,
+                headers={"content-type": "text/event-stream"},
+                content=(
+                    b'data: {"choices":[{"delta":{"content":"hi"}}]}\n\n'
+                    b"data: [DONE]\n\n"
+                ),
+                request=request,
+            )
+
+    caplog.set_level("INFO", logger="gateway.llm.upstream")
+    async with httpx.AsyncClient(transport=TracedTransport()) as client:
+        provider = ConfiguredLlmProvider(FakeConfiguration(), client)  # type: ignore[arg-type]
+        stream = provider.stream("public-chat", [ChatMessage("user", "hi")], 20)
+        await anext(stream)  # upstream headers
+        await anext(stream)  # first SSE content frame
+        await anext(stream)  # upstream [DONE]
+        await stream.aclose()
+
+    timing = next(
+        record.message for record in caplog.records if "upstream_transport_timing" in record.message
+    )
+    assert "connection_reused=False" in timing
+    assert "dns_ms=not_separately_exposed" in timing
+    assert "dns_tcp_ms=" in timing
+    assert "tls_ms=" in timing
+    assert "send_headers_ms=" in timing
+    assert "send_body_ms=" in timing
+    assert "response_headers_ms=" in timing
+    assert "pool_wait_ms=unavailable" in timing

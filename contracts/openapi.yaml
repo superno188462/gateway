@@ -851,7 +851,7 @@ paths:
       tags:
       - LLM Gateway
       summary: 调用 OpenAI 兼容 Chat Completions 网关
-      description: 通过项目 API Key 自动解析项目并执行额度校验；请求正文不被保存。
+      description: '通过项目 API Key 自动解析项目并执行额度校验；请求正文不被保存。stream=false 返回完整 JSON；stream=true 等上游响应头成功后立即返回 SSE 响应，并逐帧转发上游数据。响应头发送后发生的上游错误以 SSE error 数据帧通知，且不会切换到其他上游。'
       operationId: chat_completions_v1_chat_completions_post
       requestBody:
         content:
@@ -861,10 +861,14 @@ paths:
         required: true
       responses:
         '200':
-          description: Successful Response
+          description: 'OpenAI 兼容的完整 JSON 响应，或 stream=true 时的 Server-Sent Events。'
           content:
             application/json:
               schema: {}
+            text/event-stream:
+              schema:
+                type: string
+                description: 'OpenAI Chat Completion chunk 数据帧，最后以 data: [DONE] 结束。'
         '422':
           description: Validation Error
           content:

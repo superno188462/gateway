@@ -300,6 +300,15 @@ async def test_llm_mock_access_chat_stream_quota_and_upgrade(
             assert "text/event-stream" in streaming.headers["content-type"]
             assert "data: [DONE]" in streaming.text
             assert '"usage"' in streaming.text
+            streamed_request_id = streaming.headers["x-request-id"]
+            async with factory.begin() as session:
+                streamed_record = await session.scalar(
+                    select(GatewayRequest).where(
+                        GatewayRequest.request_id == streamed_request_id
+                    )
+                )
+                assert streamed_record is not None
+                assert streamed_record.status == "succeeded"
 
             async with factory.begin() as session:
                 bucket = await session.scalar(

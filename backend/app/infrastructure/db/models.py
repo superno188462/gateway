@@ -227,6 +227,14 @@ class ServiceUsageBucket(Base):
     """按项目、服务和 UTC 月份记录已消费及预留 token。"""
 
     __tablename__ = "service_usage_buckets"
+    __table_args__ = (
+        Index(
+            "ix_service_usage_buckets_service_period_project",
+            "service_code",
+            "period_start",
+            "project_id",
+        ),
+    )
 
     project_id: Mapped[UUID] = mapped_column(
         PostgreSQLUUID(as_uuid=True),

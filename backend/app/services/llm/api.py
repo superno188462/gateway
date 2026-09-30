@@ -3,7 +3,7 @@
 import json
 import logging
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator, AsyncIterator
 from typing import Annotated, Any, cast
 
 from fastapi import APIRouter, Depends, Request
@@ -20,10 +20,11 @@ from app.container import (
 )
 from app.request_logging.application import GatewayRequestRecorder
 from app.services.llm.application import GatewayCompletion, GatewayRequestError, LlmGatewayService
-from app.services.llm.domain import ChatMessage
+from app.services.llm.domain import ChatMessage, ProviderStreamEvent
 
 router = APIRouter(tags=["LLM Gateway"])
 logger = logging.getLogger("gateway.auth")
+stream_logger = logging.getLogger("gateway.llm.stream")
 
 
 class ChatMessageRequest(BaseModel):
@@ -166,9 +167,57 @@ async def _invoke(
         return openai_error(error.status_code, error.code, str(error), error.request_id)
 
 
+async def _relay_stream(
+    iterator: AsyncGenerator[ProviderStreamEvent, None],
+    first: ProviderStreamEvent,
+    request_id: str,
+) -> AsyncIterator[str]:
+    """把 Provider 数据帧编码为 SSE；上游开始输出后的错误以 SSE error 帧结束。"""
+    try:
+        downstream_started = time.perf_counter()
+        stream_logger.info("downstream_response_headers request_id=%s", request_id)
+        current = first
+        first_downstream_chunk = True
+        while True:
+            if current.done:
+                yield "data: [DONE]\n\n"
+                return
+            if current.data is not None and first_downstream_chunk:
+                first_downstream_chunk = False
+                stream_logger.info(
+                    "downstream_first_chunk request_id=%s duration_ms=%d",
+                    request_id,
+                    round((time.perf_counter() - downstream_started) * 1000),
+                )
+            if current.data is not None:
+                yield f"data: {json.dumps(current.data, ensure_ascii=False)}\n\n"
+            try:
+                current = await anext(iterator)
+            except StopAsyncIteration:
+                yield "data: [DONE]\n\n"
+                return
+    except GatewayRequestError as error:
+        failure = {
+            "error": {
+                "message": str(error),
+                "type": "gateway_error",
+                "code": error.code,
+                "request_id": request_id,
+            }
+        }
+        yield f"data: {json.dumps(failure, ensure_ascii=False)}\n\n"
+        yield "data: [DONE]\n\n"
+    finally:
+        await iterator.aclose()
+
+
 @router.post(
     "/v1/chat/completions",
     summary="调用 OpenAI 兼容 Chat Completions 网关",
+    description=(
+        "stream=false 返回完整 JSON；stream=true 在上游响应头成功后返回 SSE，"
+        "并逐帧转发上游数据。下游响应开始后发生的上游错误通过 SSE error 帧通知。"
+    ),
     response_model=None,
 )
 async def chat_completions(
@@ -218,24 +267,58 @@ async def chat_completions(
         key.id,
     )
 
-    result = await _invoke(payload, key, gateway, request_id)
-    if isinstance(result, JSONResponse):
-        return result
     if payload.stream:
-        stream_options = (
-            cast(dict[str, bool], payload.stream_options.model_dump(exclude_unset=True))
-            if payload.stream_options is not None
-            else {}
+        messages = [
+            ChatMessage(
+                role=item.role,
+                content=item.content,
+                fields=item.model_dump(exclude={"role", "content"}, exclude_unset=True),
+            )
+            for item in payload.messages
+        ]
+        parameters = cast(
+            dict[str, object],
+            payload.model_dump(
+                exclude={"model", "messages", "stream"},
+                exclude_unset=True,
+            ),
         )
+        iterator = gateway.stream(
+            key,
+            payload.model,
+            messages,
+            payload.max_completion_tokens or payload.max_tokens or 256,
+            parameters,
+            request_id=request_id,
+        )
+        try:
+            first = await anext(iterator)
+        except GatewayRequestError as error:
+            await iterator.aclose()
+            return openai_error(error.status_code, error.code, str(error), error.request_id)
+        except StopAsyncIteration:
+            await iterator.aclose()
+            return openai_error(502, "upstream_stream_incomplete", "上游流式响应为空", request_id)
+        if not first.headers_received:
+            await iterator.aclose()
+            return openai_error(
+                502,
+                "upstream_stream_incomplete",
+                "上游未返回有效的流式响应头",
+                request_id,
+            )
         return StreamingResponse(
-            _stream_response(result, stream_options),
+            _relay_stream(iterator, first, request_id),
             media_type="text/event-stream",
             headers={
                 "Cache-Control": "no-cache",
                 "X-Accel-Buffering": "no",
-                "x-request-id": result.request_id,
+                "x-request-id": request_id,
             },
         )
+    result = await _invoke(payload, key, gateway, request_id)
+    if isinstance(result, JSONResponse):
+        return result
     return _json_response(result)
 
 
@@ -266,92 +349,3 @@ def _json_response(result: GatewayCompletion) -> JSONResponse:
             },
         },
     )
-
-
-async def _stream_response(
-    result: GatewayCompletion, stream_options: dict[str, bool]
-) -> AsyncIterator[str]:
-    """将完整 Provider 结果编码为兼容 SSE chunks，并以 [DONE] 结束。"""
-    completion = result.completion
-    common = {
-        "id": result.request_id,
-        "object": "chat.completion.chunk",
-        "created": int(time.time()),
-        "model": result.model,
-    }
-    raw_choices = completion.raw_response.get("choices") if completion.raw_response else None
-    if isinstance(raw_choices, list):
-        for raw_choice in raw_choices:
-            if not isinstance(raw_choice, dict):
-                continue
-            first = {
-                **common,
-                "choices": [
-                    {
-                        "index": raw_choice.get("index", 0),
-                        "delta": {"role": "assistant"},
-                        "finish_reason": None,
-                    }
-                ],
-            }
-            yield f"data: {json.dumps(first, ensure_ascii=False)}\n\n"
-            raw_message = raw_choice.get("message")
-            if isinstance(raw_message, dict):
-                delta = {key: value for key, value in raw_message.items() if key != "role"}
-                choice_index = raw_choice.get("index", 0)
-                delta_chunk = {
-                    **common,
-                    "choices": [{"index": choice_index, "delta": delta, "finish_reason": None}],
-                }
-                yield f"data: {json.dumps(delta_chunk, ensure_ascii=False)}\n\n"
-            finish_chunk = {
-                **common,
-                "choices": [
-                    {
-                        "index": raw_choice.get("index", 0),
-                        "delta": {},
-                        "finish_reason": raw_choice.get("finish_reason", "stop"),
-                    }
-                ],
-            }
-            yield f"data: {json.dumps(finish_chunk, ensure_ascii=False)}\n\n"
-        if stream_options.get("include_usage"):
-            raw_usage = completion.raw_response.get("usage") if completion.raw_response else None
-            usage_chunk: dict[str, object] = {**common, "choices": []}
-            usage_chunk["usage"] = raw_usage or {
-                "prompt_tokens": completion.prompt_tokens,
-                "completion_tokens": completion.completion_tokens,
-                "total_tokens": completion.prompt_tokens + completion.completion_tokens,
-            }
-            yield f"data: {json.dumps(usage_chunk, ensure_ascii=False)}\n\n"
-    else:
-        first = {
-            **common,
-            "choices": [{"index": 0, "delta": {"role": "assistant"}, "finish_reason": None}],
-        }
-        yield f"data: {json.dumps(first, ensure_ascii=False)}\n\n"
-        text = completion.content
-        for start in range(0, len(text), 24):
-            chunk = {
-                **common,
-                "choices": [
-                    {
-                        "index": 0,
-                        "delta": {"content": text[start : start + 24]},
-                        "finish_reason": None,
-                    }
-                ],
-            }
-            yield f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n"
-        last: dict[str, object] = {
-            **common,
-            "choices": [{"index": 0, "delta": {}, "finish_reason": completion.finish_reason}],
-        }
-        if stream_options.get("include_usage"):
-            last["usage"] = {
-                "prompt_tokens": completion.prompt_tokens,
-                "completion_tokens": completion.completion_tokens,
-                "total_tokens": completion.prompt_tokens + completion.completion_tokens,
-            }
-        yield f"data: {json.dumps(last, ensure_ascii=False)}\n\n"
-    yield "data: [DONE]\n\n"

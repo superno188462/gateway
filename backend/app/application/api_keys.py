@@ -5,11 +5,11 @@ import hashlib
 import hmac
 import secrets
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 from cryptography.fernet import Fernet, InvalidToken
-from sqlalchemy import select
+from sqlalchemy import or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.infrastructure.db.models import ApiKey, Project, ProjectMember, User
@@ -62,6 +62,7 @@ class VerifiedApiKey:
 
     id: UUID
     project_id: UUID
+    owner_id: UUID
     name: str
 
 
@@ -133,7 +134,13 @@ class ApiKeyService:
         """供网关调用认证使用；不泄露 Key 是否存在，并记录最近使用时间。"""
         prefix = secret[: self.prefix_length]
         async with self._session_factory.begin() as session:
-            key = await session.scalar(select(ApiKey).where(ApiKey.key_prefix == prefix))
+            row = await session.execute(
+                select(ApiKey, Project.owner_id)
+                .join(Project, Project.id == ApiKey.project_id)
+                .where(ApiKey.key_prefix == prefix)
+            )
+            result = row.one_or_none()
+            key = result[0] if result is not None else None
             if (
                 key is None
                 or not hmac.compare_digest(key.key_hash, self._digest(secret))
@@ -141,8 +148,27 @@ class ApiKeyService:
                 or (key.expires_at is not None and key.expires_at <= datetime.now(UTC))
             ):
                 raise ApiKeyInvalidError("API Key 无效、已撤销或已过期")
-            key.last_used_at = datetime.now(UTC)
-            return VerifiedApiKey(id=key.id, project_id=key.project_id, name=key.name)
+            now = datetime.now(UTC)
+            # 每次请求都写同一 API Key 行会制造不必要的写放大和并发锁竞争。
+            # 最近使用时间按分钟粒度更新，首次使用仍会立即记录。
+            await session.execute(
+                update(ApiKey)
+                .where(
+                    ApiKey.id == key.id,
+                    or_(
+                        ApiKey.last_used_at.is_(None),
+                        ApiKey.last_used_at < now - timedelta(minutes=1),
+                    ),
+                )
+                .values(last_used_at=now)
+            )
+            assert result is not None
+            return VerifiedApiKey(
+                id=key.id,
+                project_id=key.project_id,
+                owner_id=result[1],
+                name=key.name,
+            )
 
     def _digest(self, secret: str) -> str:
         return hmac.new(self._digest_key, secret.encode("utf-8"), hashlib.sha256).hexdigest()
