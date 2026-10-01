@@ -17,7 +17,7 @@
 
 ## 当前阶段
 
-- 当前：A7 公网部署；已新增前后端镜像、生产 Compose、部署脚本和克隆后操作文档，尚未在目标服务器完成真实部署验证。
+- 当前：A7 公网部署；已新增后端镜像、前端静态构建导出任务、生产 Compose、部署脚本和克隆后操作文档。项目不运行 Nginx，计划由服务器现有 Nginx 托管静态文件并反代 API；尚未在目标服务器完成真实部署验证。
 - 本轮不包含：其他 ASR/TTS/Embedding/RAG 服务的实际实现。
 - 运行约定：后端 `uv run python main.py`；前端在 F0 后使用 `npm run dev`；运行时数据库使用服务器 PostgreSQL。Docker 仅用于后续服务器部署。
 - DI 约定：`AppContainer` 注册配置、数据库引擎和基础设施服务单例；路由通过 FastAPI `Depends` 获取，不自行创建服务。
@@ -222,10 +222,10 @@
 
 ## A7 Docker 部署准备
 
-- 新增 `backend/Dockerfile`、`frontend/Dockerfile`、统一 `compose.yaml` 和 Nginx 反向代理配置；镜像构建使用锁定的 Python/Node 依赖。
-- `deploy/deploy.sh` 负责校验 Compose 配置、构建镜像、升级 Alembic 数据库并启动前后端。
+- 新增 `backend/Dockerfile`、用于构建并导出前端静态文件的 `frontend/Dockerfile`、统一 `compose.yaml` 和部署脚本；镜像构建使用锁定的 Python/Node 依赖。Nginx 由服务器部署环境管理，项目不启动 Nginx 容器。
+- `deploy/deploy.sh` 负责构建后端镜像、导出前端静态文件、升级 Alembic 数据库并启动后端容器。
 - 新增 `docker.md`，记录 Git 克隆后配置密钥、数据库、启动、健康检查、更新和备份步骤。
 - Redis 未加入部署：当前网关没有 Redis 客户端依赖或使用场景，不启动未使用的基础设施。
-- 待验证：Docker Compose 配置解析、前后端镜像实际构建和目标服务器启动；公网 TLS、限流、备份恢复及安全验收仍未完成。
+- 待验证：Docker Compose 配置解析、后端镜像/前端静态文件实际构建和目标服务器启动；公网 Nginx 集成、TLS、限流、备份恢复及安全验收仍未完成。
 
 下一步是在目标服务器按 `docker.md` 完成一次部署演练，再补齐 HTTPS、限流和备份恢复验收。

@@ -26,6 +26,11 @@ class Settings(BaseSettings):
     )
 
     app_env: AppEnvironment = AppEnvironment.DEVELOPMENT
+    root_path: str = Field(
+        default="",
+        validation_alias="APP_ROOT_PATH",
+        description="反向代理挂载应用的外部路径前缀，例如 /gateway；本地直连时留空。",
+    )
     database_url: str = Field(description="SQLAlchemy 异步 PostgreSQL 连接串。")
     log_level: str = "INFO"
     log_file_path: Path = Path("logs/gateway.log")

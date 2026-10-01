@@ -56,6 +56,7 @@ def create_app(
         title="Agent Gateway API",
         version="0.1.0",
         description="Agent 网关中台后端，提供账户、项目、服务管理和模型网关接口。",
+        root_path=resolved_settings.root_path,
         lifespan=lifespan,
     )
     app.state.container = container

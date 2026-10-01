@@ -18,8 +18,10 @@ if ! docker network inspect gateway-proxy >/dev/null 2>&1; then
   docker network create gateway-proxy >/dev/null
 fi
 
+mkdir -p deploy/www
 docker compose config >/dev/null
-docker compose build --pull
+docker compose build --pull api frontend-assets
+docker compose run --rm frontend-assets
 docker compose run --rm api uv run alembic upgrade head
 docker compose up -d --remove-orphans
 docker compose ps

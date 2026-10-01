@@ -15,6 +15,16 @@ def test_accepts_async_postgresql_url() -> None:
     assert settings.database_url.startswith("postgresql+asyncpg://")
 
 
+def test_accepts_external_root_path_for_reverse_proxy() -> None:
+    settings = Settings(
+        database_url="postgresql+asyncpg://user:pass@localhost/db",
+        jwt_secret_key="x" * 32,
+        APP_ROOT_PATH="/gateway",
+        _env_file=None,
+    )
+    assert settings.root_path == "/gateway"
+
+
 def test_rejects_sync_or_non_postgresql_url() -> None:
     with pytest.raises(ValidationError):
         Settings(database_url="sqlite:///gateway.db", jwt_secret_key="x" * 32, _env_file=None)

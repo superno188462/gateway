@@ -49,22 +49,15 @@ services:
       retries: 3
       start_period: 25s
 
-  web:
-    image: agent-gateway-web:local
+  frontend-assets:
+    image: agent-gateway-frontend-build:local
+    profiles: ["assets"]
     build:
       context: .
       dockerfile: frontend/Dockerfile
-    depends_on:
-      api:
-        condition: service_healthy
-    expose:
-      - "80"
-    networks:
-      default: {}
-      gateway_proxy:
-        aliases:
-          - agent-gateway-web
-    restart: unless-stopped
+    command: ["sh", "-c", "mkdir -p /output && cp -a /frontend/dist/. /output/"]
+    volumes:
+      - ./deploy/www:/output
 
 volumes:
   gateway_pgdata:

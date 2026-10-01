@@ -286,7 +286,8 @@ async function request<T>(
   options: RequestInit = {},
   token?: string,
 ): Promise<T> {
-  const response = await fetch(`/api${path}`, {
+  const appBasePath = import.meta.env.BASE_URL.replace(/\/$/, "");
+  const response = await fetch(`${appBasePath}/api${path}`, {
     ...options,
     headers: {
       Accept: "application/json",

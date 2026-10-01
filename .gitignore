@@ -11,4 +11,5 @@ backend/.venv/
 backend/logs/
 frontend/node_modules/
 frontend/dist/
+deploy/www/
 .tmp/

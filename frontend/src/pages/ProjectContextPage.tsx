@@ -132,9 +132,8 @@ export function ProjectContextPage() {
   if (loading) return <section className="page-content"><div className="empty-state">正在加载项目上下文…</div></section>;
   if (!project) return <section className="page-content"><p className="form-error">{error ?? "项目不存在或无权访问。"}</p></section>;
 
-  const baseUrl = window.location.port === "5173"
-    ? "/v1/context"
-    : `${window.location.origin}/v1/context`;
+  const appBasePath = import.meta.env.BASE_URL.replace(/\/$/, "");
+  const baseUrl = `${window.location.origin}${appBasePath}/v1/context`;
   const selectedKey = keys.find((key) => key.id === selectedKeyId);
 
   async function contextRequest<T>(path: string, init: RequestInit = {}): Promise<T> {
@@ -309,14 +308,14 @@ export function ProjectContextPage() {
         <h3 id="context-api-title">记忆与画像 API</h3>
         <p>短期记忆支持按 key 原子覆盖和 TTL；长期记忆支持分页、标签和版本更新；用户画像使用 JSON 整体替换并校验版本。所有这些请求同样通过项目 API Key 授权。</p>
         <div className="context-api-list">
-          <code>GET /v1/context/templates</code>
-          <code>GET /v1/context/users/&#123;external_user_id&#125;/sessions/&#123;session_id&#125;/memories</code>
-          <code>PUT /v1/context/users/&#123;external_user_id&#125;/sessions/&#123;session_id&#125;/memories/&#123;key&#125;</code>
-          <code>GET · POST /v1/context/users/&#123;external_user_id&#125;/memories</code>
-          <code>GET · PUT /v1/context/users/&#123;external_user_id&#125;/profile</code>
+          <code>GET {appBasePath}/v1/context/templates</code>
+          <code>GET {appBasePath}/v1/context/users/&#123;external_user_id&#125;/sessions/&#123;session_id&#125;/memories</code>
+          <code>PUT {appBasePath}/v1/context/users/&#123;external_user_id&#125;/sessions/&#123;session_id&#125;/memories/&#123;key&#125;</code>
+          <code>GET · POST {appBasePath}/v1/context/users/&#123;external_user_id&#125;/memories</code>
+          <code>GET · PUT {appBasePath}/v1/context/users/&#123;external_user_id&#125;/profile</code>
         </div>
         <pre className="context-example"><code>{`curl ${window.location.origin}${baseUrl}/users/user-123/profile \\\n  -H "Authorization: Bearer $PROJECT_API_KEY"`}</code></pre>
-        <p className="member-empty">API 文档：启动后端后打开 /docs，查看 Project Context Gateway。调用日志记录成功/失败和服务码，不保存上下文正文。</p>
+        <p className="member-empty">API 文档：打开 {appBasePath}/docs，查看 Project Context Gateway。调用日志记录成功/失败和服务码，不保存上下文正文。</p>
       </section>
 
       <section className="project-detail-panel" aria-labelledby="context-records-title">

@@ -18,7 +18,7 @@ $env:DATABASE_URL = "postgresql+asyncpg://数据库用户:数据库密码@119.45
 
 当前后端读取的应用配置包括 `DATABASE_URL`、`APP_ENV`、`LOG_LEVEL`、`LOG_FILE_PATH`、`LOG_BACKUP_COUNT`、`JWT_SECRET_KEY`、`JWT_ACCESS_TOKEN_EXPIRE_MINUTES`、`DEFAULT_LLM_MONTHLY_TOKEN_LIMIT` 和 A3 的 `API_KEY_SECRET_KEY`。日志默认写入 `backend/logs/gateway.log`，每天轮转并保留 30 个归档文件；管理员可在控制台的“技术日志”页面查看、按等级/Trace ID/事件筛选。管理员引导可同时配置 `ADMIN_USERNAME`、`ADMIN_PASSWORD`；两项都缺省时必须已经存在数据库管理员。`POSTGRES_USER`、`POSTGRES_PASSWORD` 等属于数据库容器配置，不属于应用配置，因此不放在应用 `.env.example` 中。
 
-网关运行时使用已有 PostgreSQL 数据库。单一 `compose.yaml` 定义网关前后端；仓库内的 PostgreSQL 仅在 `local-db` profile 下启动，服务器部署默认连接已有数据库，不会自动启动或暴露数据库。当前网关不依赖 Redis。
+网关运行时使用已有 PostgreSQL 数据库。单一 `compose.yaml` 定义后端服务和前端静态文件构建导出任务；仓库不包含 Nginx 服务，服务器部署由已有 Nginx 直接托管前端并反代 API。仓库内的 PostgreSQL 仅在 `local-db` profile 下启动，服务器部署默认连接已有数据库，不会自动启动或暴露数据库。当前网关不依赖 Redis。
 
 ## 安装后端依赖并迁移
 

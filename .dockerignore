@@ -9,6 +9,7 @@
 **/node_modules
 **/dist
 **/logs
+deploy/www
 .env
 backend/.env
 .tmp

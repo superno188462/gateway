@@ -1,6 +1,6 @@
 # OpenCode 部署任务：将网关部署在 `/gateway` 路径下
 
-本文供服务器上的 OpenCode 执行后续部署改造时参考。目标是让 Agent Gateway 与同域名下的其他应用共存，不占用它们的 `/api/` 或 `/v1/` 路径。
+本文供服务器上的 OpenCode 执行后续部署改造时参考。Agent Gateway 项目自身不运行 Nginx；服务器已有的 Nginx 属于外部部署环境，由服务器 OpenCode 检查现状后自行选择安全的配置方式。目标是让 Agent Gateway 与同域名下的其他应用共存，不占用它们的 `/api/` 或 `/v1/` 路径。
 
 ## 部署目标
 
@@ -14,14 +14,14 @@
 
 ## 实施前检查
 
-1. 确认仓库中的 `compose.yaml`、前后端 Dockerfile、Vite 配置、React Router、前端 API 客户端及 `deploy/nginx/default.conf` 当前内容；不要覆盖服务器已有的 Nginx 配置。
+1. 确认仓库中的 `compose.yaml`、前后端 Dockerfile、Vite 配置、React Router、前端 API 客户端及 `APP_ROOT_PATH` 当前值；项目本身不提供或启动 Nginx。
 2. 记录 Nginx 当前容器/服务名、配置文件挂载位置、网关 Compose 项目目录、Docker 网络和现有对外端口。保留当前 TLS 证书、其他站点与 location 配置。
 3. 备份将要修改的 Nginx 配置文件。使用仓库实际 Compose 文件和环境变量，不要另造一套数据库或 Redis 容器；当前网关没有 Redis 依赖。
 4. 检查 `.env`、密钥、数据库凭据和其他项目配置，不要将其写入仓库或输出到日志。
 
 ## 前端要求
 
-需要让生产构建可在 `/gateway/` 子路径下工作，并保留开发环境原有行为：
+仓库代码已配置生产构建使用 `/gateway/` 子路径，并保留本地开发根路径行为。部署时先检查这些设置与服务器选定的前缀一致；如需变更，改代码后重新构建，不要只改浏览器侧 Nginx 路由：
 
 - Vite 生产资源基路径为 `/gateway/`，确保 JS、CSS、图片等资源从 `/gateway/assets/...` 加载。
 - React Router 的 basename 为 `/gateway`，确保直接打开或刷新 `/gateway/<页面路由>` 可用。
@@ -36,61 +36,17 @@
 
 | 外部请求 | 内部上游 | 上游收到的路径 |
 |---|---|---|
-| `/gateway/` 和 `/gateway/<前端路由>` | 前端容器 `agent-gateway-web:80` | 原路径去掉 `/gateway`，SPA 回退到 `index.html` |
+| `/gateway/` 和 `/gateway/<前端路由>` | 由现有服务器 Nginx 从其挂载的 `deploy/www/` 静态目录提供 | 静态文件已按 `/gateway/` 构建；SPA 路由回退到 `index.html` |
 | `/gateway/api/...` | 后端容器 `agent-gateway-api:8000` | `/api/...` |
 | `/gateway/v1/...` | 后端容器 `agent-gateway-api:8000` | `/v1/...` |
 | `/gateway/health/...`、`/gateway/docs`、`/gateway/redoc`、`/gateway/openapi.json` | 后端容器 `agent-gateway-api:8000` | 对应的 `/health/...`、`/docs`、`/redoc`、`/openapi.json` |
 
-规则必须按最长/更具体路径优先处理 API、服务 API 和后端文档/健康检查，再处理 `/gateway/` 前端 fallback。配置示意如下，OpenCode 应根据现有 Nginx 的容器名、网络和配置结构整合，不要直接照抄造成重复 `location`：
-
-```nginx
-location = /gateway {
-    return 301 /gateway/;
-}
-
-location /gateway/api/ {
-    proxy_pass http://agent-gateway-api:8000/api/;
-    proxy_set_header Host $host;
-    proxy_set_header X-Real-IP $remote_addr;
-    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-    proxy_set_header X-Forwarded-Proto $scheme;
-}
-
-location /gateway/v1/ {
-    proxy_pass http://agent-gateway-api:8000/v1/;
-    proxy_http_version 1.1;
-    proxy_set_header Host $host;
-    proxy_set_header X-Real-IP $remote_addr;
-    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-    proxy_set_header X-Forwarded-Proto $scheme;
-    proxy_buffering off;
-    proxy_cache off;
-    proxy_read_timeout 600s;
-}
-
-location ~ ^/gateway/(health|docs|redoc|openapi\.json)(/|$) {
-    rewrite ^/gateway(/.*)$ $1 break;
-    proxy_pass http://agent-gateway-api:8000;
-    proxy_set_header Host $host;
-    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-    proxy_set_header X-Forwarded-Proto $scheme;
-}
-
-location ^~ /gateway/ {
-    rewrite ^/gateway/(.*)$ /$1 break;
-    proxy_pass http://agent-gateway-web:80;
-    proxy_set_header Host $host;
-    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-    proxy_set_header X-Forwarded-Proto $scheme;
-}
-```
-
-验证 Nginx 对 `proxy_pass` 尾部 URI 和 `rewrite` 的实际路径行为，尤其是不能将 `/gateway/api/...` 转成 `/gateway/api/...` 再交给后端。若前端容器的 Nginx `try_files` 无法正确处理剥掉前缀后的子路径，应调整其 SPA fallback，而不是把 API 请求交给前端。
+服务器 Nginx 的实际配置完全由 OpenCode 自行决定，不要求采用仓库内的配置片段。它需要检查现有 Nginx 部署方式、静态文件根目录、容器 bind mount、Docker 网络、TLS 和其他站点配置，再完成上述路径映射。关键是外部 API 前缀被正确转换为后端已有的 `/api/...` 或 `/v1/...` 路由；`/gateway/api/health/...` 需转成后端 `/health/...`，或另行提供等价健康检查路径；SSE 流式 API 不得被代理缓冲。不得替换或覆盖其他站点配置。
 
 ## Docker 与网络要求
 
-- 前端和后端由仓库的单一 `compose.yaml` 管理。
-- 外部 Nginx 必须能在共享 Docker 网络中通过 `agent-gateway-web` 与 `agent-gateway-api` 访问容器。
+- 后端运行容器和前端构建导出任务由仓库的单一 `compose.yaml` 管理；项目不包含 Nginx 容器或 Nginx 配置。
+- 部署脚本把前端构建文件导出到服务器仓库目录 `deploy/www/`。现有 Nginx 需要能读取这个目录，并加入共享 Docker 网络通过 `agent-gateway-api` 访问后端。
 - 后端端口继续只在 Docker 网络内开放；除非用户明确要求，不要把 `8000` 直接发布到公网。
 - 保留现有 PostgreSQL 配置和持久化数据；不要运行会删除 volume 或重建数据库的命令。
 - 后端 SSE/流式响应必须关闭 Nginx buffering。
@@ -102,7 +58,7 @@ location ^~ /gateway/ {
 1. `/gateway/` 返回控制台页面，静态资源均从 `/gateway/` 加载。
 2. 登录、刷新和直接打开一个嵌套路由均成功。
 3. 浏览器 Network 面板中的控制台请求走 `/gateway/api/...`，LLM/上下文请求走 `/gateway/v1/...`；没有请求到根路径 `/api/`、`/v1/`。
-4. `/gateway/api/health/ready`（如健康路由适用）或转发后的 `/gateway/health/ready` 返回成功；`/gateway/docs` 可打开且文档列出的调用路径能在该前缀下执行。
+4. 健康检查成功；`/gateway/docs` 可打开且 Swagger 请求使用 `/gateway` 前缀。
 5. 使用项目 API Key 调用 `/gateway/v1/...`，验证鉴权、错误响应及流式 SSE 首帧能正常到达。
 6. 同域名的其他应用仍能使用自己的 `/api/`、`/v1/`，没有被网关 location 截获。
 7. 用 `nginx -t` 检查配置后再 reload；检查网关容器健康状态和日志。保留部署前备份及回滚步骤。
