@@ -1,6 +1,6 @@
 # Agent Gateway
 
-当前仓库完成 P0 设计、B0 后端基础和 F0 前端基础。业务功能和管理员认证尚未实现。
+Agent Gateway 提供项目管理、API Key、LLM 网关、操作/技术日志和项目上下文服务。服务器 Docker 部署步骤见 [`docker.md`](docker.md)。
 
 ## 环境要求
 
@@ -18,7 +18,7 @@ $env:DATABASE_URL = "postgresql+asyncpg://数据库用户:数据库密码@119.45
 
 当前后端读取的应用配置包括 `DATABASE_URL`、`APP_ENV`、`LOG_LEVEL`、`LOG_FILE_PATH`、`LOG_BACKUP_COUNT`、`JWT_SECRET_KEY`、`JWT_ACCESS_TOKEN_EXPIRE_MINUTES`、`DEFAULT_LLM_MONTHLY_TOKEN_LIMIT` 和 A3 的 `API_KEY_SECRET_KEY`。日志默认写入 `backend/logs/gateway.log`，每天轮转并保留 30 个归档文件；管理员可在控制台的“技术日志”页面查看、按等级/Trace ID/事件筛选。管理员引导可同时配置 `ADMIN_USERNAME`、`ADMIN_PASSWORD`；两项都缺省时必须已经存在数据库管理员。`POSTGRES_USER`、`POSTGRES_PASSWORD` 等属于数据库容器配置，不属于应用配置，因此不放在应用 `.env.example` 中。
 
-本轮 B0 已使用隔离的本地 PostgreSQL 临时实例完成验证，但不会作为项目运行时数据库。`compose.yaml` 当前只包含 PostgreSQL 服务骨架；完整的前后端服务器 Docker 部署脚本将在 A7 阶段补齐后才可用于生产部署。
+网关运行时使用已有 PostgreSQL 数据库。单一 `compose.yaml` 定义网关前后端；仓库内的 PostgreSQL 仅在 `local-db` profile 下启动，服务器部署默认连接已有数据库，不会自动启动或暴露数据库。当前网关不依赖 Redis。
 
 ## 安装后端依赖并迁移
 
@@ -114,7 +114,7 @@ uv run --env-file ../.env pytest -m integration
 
 复制 `.env.example` 为 `backend/.env` 作为本地配置，不要提交真实 `.env`。应用默认读取启动目录下的 `backend/.env`；如果将配置放在仓库根目录，则使用 `uv run --env-file ../.env ...` 显式加载。
 
-生产环境必须通过服务器密钥配置替换示例数据库凭据，通过 HTTPS/反向代理暴露服务，并在 A7 阶段完成限流和公网安全配置。
+生产环境按 `docker.md` 配置服务器密钥和数据库连接。公网开放前仍须配置 HTTPS 反向代理、限流、防火墙规则、备份和恢复演练。
 
 ## 文档
 
@@ -123,6 +123,7 @@ uv run --env-file ../.env pytest -m integration
 - [UI 设计](docs/artifacts/ui-design.md)：前端页面和状态设计基准。
 - [决策记录](docs/decisions.md)：已确认的产品与技术决策。
 - [实施状态](docs/status.md)：当前完成情况和实际验证结果。
+- [Docker 部署](docker.md)：克隆代码后的服务器配置、镜像构建、数据库迁移和启动。
 - [实施步骤目录](docs/steps/README.md)：分阶段开发顺序、运行命令和 Codex 执行手册。
 
 后续前端初始化完成后，本地开发统一使用 `npm run dev`，不使用 Docker 启动前后端。

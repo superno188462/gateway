@@ -12,13 +12,13 @@
 | A3 | API Key | owner/editor 按成员创建自有 Key，私有可见，移除/降权自动撤销，日志可追溯 | 已完成 |
 | A4 | LLM 网关与 OpenAI 兼容上游 | 用户级额度、项目分配、项目 Key 调用、同名直通与优先级故障切换 | 功能已完成；真实供应商经网关端到端验证待执行 |
 | A5 | 日志与用量 | 通用请求日志、服务专属计量、数据库页码分页、汇总一致、日志保留 | 已完成 |
-| A6 | 模板与记忆 | 固定目录、文件 CRUD、并发冲突 | 实施中 |
-| A7 | 公网部署 | TLS、限流、备份、回滚和安全验收 | 未开始 |
+| A6 | 模板与记忆 | 固定目录、文件 CRUD、并发冲突 | 已完成 |
+| A7 | 公网部署 | 容器构建、TLS、限流、备份、回滚和安全验收 | 部署脚本已实现；服务器验收待执行 |
 
 ## 当前阶段
 
-- 当前：A6 模板与记忆；已新增固定分类设计、PostgreSQL 资源模型与迁移、项目隔离 API 和后端集成测试，前端设计已补充待用户审阅。
-- 本轮不包含：A7 公网部署及其他 ASR/TTS/Embedding/RAG 服务。
+- 当前：A7 公网部署；已新增前后端镜像、生产 Compose、部署脚本和克隆后操作文档，尚未在目标服务器完成真实部署验证。
+- 本轮不包含：其他 ASR/TTS/Embedding/RAG 服务的实际实现。
 - 运行约定：后端 `uv run python main.py`；前端在 F0 后使用 `npm run dev`；运行时数据库使用服务器 PostgreSQL。Docker 仅用于后续服务器部署。
 - DI 约定：`AppContainer` 注册配置、数据库引擎和基础设施服务单例；路由通过 FastAPI `Depends` 获取，不自行创建服务。
 
@@ -166,7 +166,7 @@
 ### 验证环境说明
 
 - 本轮迁移及 PostgreSQL 集成测试使用项目配置的获准测试数据库 `mydb`；集成测试创建随机记录并在结束时清理。
-- Docker 部署验证仍留到 A7；本轮无需 Docker。
+- Docker 部署验证在 A7 进行；开发环境仍可不使用 Docker。
 - Docker Desktop 引擎本机未成功就绪；根据项目决策，本地开发和本轮验收不以 Docker 为前置条件。
 
 ## A5 日志与用量验证记录
@@ -208,7 +208,7 @@
 - UI 设计文档已补齐路由、固定目录、只读/可写角色、编辑和删除状态、并发冲突处理与接口映射；现已实现项目上下文管理页。
 - A6 服务边界已澄清：模板、短期/长期记忆、用户画像组成独立的项目上下文服务，项目申请后由项目 API Key 调用；AI 推理额度只用于 LLM、Embedding、RAG、TTS、ASR 等模型服务，不用于上下文数据存取。项目订阅门禁和运行时 API 已实现。
 
-### A6 项目上下文服务完整实现（待用户验收）
+### A6 项目上下文服务完整实现
 
 - 服务目录注册 `project-context-v1`，项目 owner 可以在项目详情申请开通；数据服务订阅的 `monthly_token_limit` 为 `null`，上下文服务不会出现在 AI token 配额中。
 - 新增 `project_session_memories`、`project_long_term_memories`、`project_user_profiles` 三张项目隔离表，迁移 `20260930_0027`、`20260930_0028` 已实际升级到数据库。
@@ -220,6 +220,12 @@
 - 提示词模板通过登录态资源 API 创建/编辑/删除，运行时 API 支持按模板 ID 或分类/名称读取。Swagger UI 的模板、messages、长期记忆和画像请求模型提供完整 JSON 示例；短期新消息 API 为多条 OpenAI 风格 role/content 消息，旧 key/value 路由兼容。
 - 验证：PostgreSQL `mydb` 已升级至 `20260930_0029 (head)`；`uv run pytest -m 'not integration' -q` 为 36 passed、12 deselected；上下文和资源集成测试 2 passed；`uv run ruff check app tests migrations/versions/20260930_0029_session_messages.py`、`uv run mypy app`、OpenAPI 合同测试、前端 `npm run build` 和 `npm run lint` 均通过。
 
-## 下一步
+## A7 Docker 部署准备
 
-A6 验收完成后再进入 A7 公网部署。
+- 新增 `backend/Dockerfile`、`frontend/Dockerfile`、统一 `compose.yaml` 和 Nginx 反向代理配置；镜像构建使用锁定的 Python/Node 依赖。
+- `deploy/deploy.sh` 负责校验 Compose 配置、构建镜像、升级 Alembic 数据库并启动前后端。
+- 新增 `docker.md`，记录 Git 克隆后配置密钥、数据库、启动、健康检查、更新和备份步骤。
+- Redis 未加入部署：当前网关没有 Redis 客户端依赖或使用场景，不启动未使用的基础设施。
+- 待验证：Docker Compose 配置解析、前后端镜像实际构建和目标服务器启动；公网 TLS、限流、备份恢复及安全验收仍未完成。
+
+下一步是在目标服务器按 `docker.md` 完成一次部署演练，再补齐 HTTPS、限流和备份恢复验收。

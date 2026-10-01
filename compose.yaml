@@ -1,5 +1,6 @@
 services:
   postgres:
+    profiles: ["local-db"]
     image: pgvector/pgvector:pg16
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-gateway}
@@ -15,5 +16,61 @@ services:
       timeout: 3s
       retries: 15
 
+  api:
+    image: agent-gateway-api:local
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    env_file:
+      - .env
+    environment:
+      APP_ENV: production
+      LOG_FILE_PATH: /var/log/gateway/gateway.log
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    expose:
+      - "8000"
+    networks:
+      default: {}
+      gateway_proxy:
+        aliases:
+          - agent-gateway-api
+    volumes:
+      - gateway_logs:/var/log/gateway
+    restart: unless-stopped
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/ready', timeout=4)"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 25s
+
+  web:
+    image: agent-gateway-web:local
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    depends_on:
+      api:
+        condition: service_healthy
+    expose:
+      - "80"
+    networks:
+      default: {}
+      gateway_proxy:
+        aliases:
+          - agent-gateway-web
+    restart: unless-stopped
+
 volumes:
   gateway_pgdata:
+  gateway_logs:
+
+networks:
+  gateway_proxy:
+    name: gateway-proxy
+    external: true
