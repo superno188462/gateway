@@ -269,6 +269,7 @@ async def stream_transcription(websocket: WebSocket) -> None:
                         )
                     await gateway.reserve_stream_audio(session, len(chunk))
                     await provider.send_realtime_audio(upstream, chunk, sequence)
+                    gateway.mark_stream_audio_forwarded(session, len(chunk))
                     sequence += 1
                     if upstream_task not in done:
                         continue
@@ -309,6 +310,10 @@ async def stream_transcription(websocket: WebSocket) -> None:
                         "火山 ASR 上游关闭连接时未完成识别",
                     ) from error
                 for event in events:
+                    if event.get("type") == "transcript.final":
+                        # 将已收到的音频时长随句级 final 分段结算；后续连接中断时
+                        # 只退还尚未结算的预留额度。
+                        await gateway.settle_stream_progress(session)
                     await websocket.send_json({**event, "request_id": request_id})
                 logger.info(
                     "asr_stream_upstream_response request_id=%s model=%s event_count=%d "
@@ -326,7 +331,9 @@ async def stream_transcription(websocket: WebSocket) -> None:
                         {
                             "type": "session.completed",
                             "request_id": request_id,
-                            "audio_seconds": round(session.audio_bytes / PCM_BYTES_PER_SECOND, 3),
+                            "audio_seconds": round(
+                                session.forwarded_audio_bytes / PCM_BYTES_PER_SECOND, 3
+                            ),
                             "billed_seconds": used,
                         }
                     )

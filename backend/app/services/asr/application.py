@@ -48,7 +48,9 @@ class AsrStreamSession:
     period_start: datetime
     routes: tuple[ResolvedAsrModel, ...]
     audio_bytes: int = 0
+    forwarded_audio_bytes: int = 0
     reserved_seconds: int = 0
+    settled_seconds: int = 0
     finished: bool = False
 
 
@@ -248,7 +250,7 @@ class AsrGatewayService:
         """累计当前音频时长，并按需追加预留秒数。"""
         session.audio_bytes += byte_count
         target_seconds = max(1, math.ceil(session.audio_bytes / 32_000))
-        additional = target_seconds - session.reserved_seconds
+        additional = target_seconds - session.reserved_seconds - session.settled_seconds
         if additional > 0:
             await self._reserve(
                 session.key,
@@ -259,6 +261,46 @@ class AsrGatewayService:
                 finish_denied=False,
             )
             session.reserved_seconds += additional
+
+    async def settle_stream_progress(self, session: AsrStreamSession) -> int:
+        """在每个句级 final 到达时结算已接收音频，避免等待整条 WS 会话结束。"""
+        if session.finished or session.forwarded_audio_bytes <= 0:
+            return 0
+        target_seconds = max(1, math.ceil(session.forwarded_audio_bytes / 32_000))
+        additional = min(
+            max(0, target_seconds - session.settled_seconds), session.reserved_seconds
+        )
+        if additional <= 0:
+            return 0
+        async with self._session_factory.begin() as db_session:
+            bucket = await db_session.scalar(
+                select(ServiceUsageBucket)
+                .where(
+                    ServiceUsageBucket.project_id == session.key.project_id,
+                    ServiceUsageBucket.service_code == ASR_SERVICE_CODE,
+                    ServiceUsageBucket.period_start == session.period_start,
+                )
+                .with_for_update()
+            )
+            assert bucket is not None
+            bucket.tokens_reserved = max(0, bucket.tokens_reserved - additional)
+            bucket.tokens_used += additional
+        session.reserved_seconds -= additional
+        session.settled_seconds += additional
+        logger.info(
+            "asr_stream_usage_checkpoint request_id=%s model=%s billed_seconds=%d "
+            "total_billed_seconds=%d",
+            session.request_id,
+            session.model,
+            additional,
+            session.settled_seconds,
+        )
+        return additional
+
+    @staticmethod
+    def mark_stream_audio_forwarded(session: AsrStreamSession, byte_count: int) -> None:
+        """仅统计已经成功写入 ASR 上游 WebSocket 的 PCM 字节。"""
+        session.forwarded_audio_bytes += byte_count
 
     async def finish_stream(
         self,
@@ -271,6 +313,12 @@ class AsrGatewayService:
         if session.finished:
             return 0
         if error_code:
+            total_used = (
+                max(1, math.ceil(session.forwarded_audio_bytes / 32_000))
+                if session.forwarded_audio_bytes
+                else 0
+            )
+            unbilled_used = max(0, total_used - session.settled_seconds)
             await self._finish_failure(
                 session.request_id,
                 session.started,
@@ -278,10 +326,11 @@ class AsrGatewayService:
                 error_message or "ASR 请求失败",
                 period_start=session.period_start,
                 reserved=session.reserved_seconds,
+                used=unbilled_used,
             )
             session.finished = True
-            return 0
-        if session.audio_bytes == 0:
+            return total_used
+        if session.forwarded_audio_bytes == 0:
             await self._finish_failure(
                 session.request_id,
                 session.started,
@@ -292,7 +341,8 @@ class AsrGatewayService:
             )
             session.finished = True
             return 0
-        used = max(1, math.ceil(session.audio_bytes / 32_000))
+        total_used = max(1, math.ceil(session.forwarded_audio_bytes / 32_000))
+        used = max(0, total_used - session.settled_seconds)
         await self._settle(
             session.key,
             session.request_id,
@@ -302,11 +352,11 @@ class AsrGatewayService:
             self._latency(session.started),
             (
                 f"实时 ASR 成功，模型 {session.model}，音频 "
-                f"{session.audio_bytes / 32_000:.2f} 秒，计费 {used} 秒"
+                f"{session.forwarded_audio_bytes / 32_000:.2f} 秒，计费 {total_used} 秒"
             ),
         )
         session.finished = True
-        return used
+        return total_used
 
     async def transcribe(
         self,
@@ -581,12 +631,13 @@ class AsrGatewayService:
         *,
         period_start: datetime | None,
         reserved: int,
+        used: int = 0,
     ) -> None:
         async with self._session_factory.begin() as session:
             record = await self._recorder._get_record(session, request_id)
             if record.status == "denied":
                 return
-            if reserved and period_start is not None:
+            if (reserved or used) and period_start is not None:
                 bucket = await session.scalar(
                     select(ServiceUsageBucket)
                     .where(
@@ -598,6 +649,7 @@ class AsrGatewayService:
                 )
                 if bucket is not None:
                     bucket.tokens_reserved = max(0, bucket.tokens_reserved - reserved)
+                    bucket.tokens_used += used
             await self._recorder.record_stage_in_session(
                 session, request_id, "service_call", "failed", error_code=code
             )
