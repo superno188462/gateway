@@ -42,6 +42,7 @@ class UserServiceQuotaInfo:
     service_code: str
     name: str
     models: tuple[str, ...]
+    quota_unit: str
     monthly_token_limit: int
     allocated_tokens: int
     available_tokens: int
@@ -64,6 +65,7 @@ class ProjectServiceInfo:
 
     project_id: UUID
     service_code: str
+    quota_unit: str
     monthly_token_limit: int | None
     status: str
     period_start: str
@@ -77,6 +79,7 @@ class ServiceProjectInfo:
 
     project: Project
     service_code: str
+    quota_unit: str
     monthly_token_limit: int | None
     status: str
     tokens_used: int
@@ -109,7 +112,10 @@ class ProjectServiceManagement:
         self, service_code: str, user: User, offset: int, limit: int
     ) -> tuple[list[ServiceProjectInfo], int]:
         """分页列出当前用户可访问且已开通指定服务的运行中项目。"""
-        if not any(item.code == service_code for item in await self._current_catalog()):
+        catalog_item = next(
+            (item for item in await self._current_catalog() if item.code == service_code), None
+        )
+        if catalog_item is None:
             raise ServiceAccessNotFoundError("服务不存在")
         conditions = [
             Project.status == "active",
@@ -157,6 +163,7 @@ class ProjectServiceManagement:
                 ServiceProjectInfo(
                     project=project,
                     service_code=subscription.service_code,
+                    quota_unit=catalog_item.quota_unit or "requests",
                     monthly_token_limit=subscription.monthly_token_limit,
                     status=subscription.status,
                     tokens_used=bucket.tokens_used if bucket is not None else 0,
@@ -168,6 +175,7 @@ class ProjectServiceManagement:
 
     async def list_for_project(self, project_id: UUID, user: User) -> list[ProjectServiceInfo]:
         """列出项目已开通服务；项目成员和管理员可 review。"""
+        catalog = {item.code: item for item in await self._current_catalog()}
         async with self._session_factory() as session:
             await self._require_review(session, project_id, user)
             now = datetime.now(UTC)
@@ -186,6 +194,7 @@ class ProjectServiceManagement:
                     ProjectServiceInfo(
                         project_id=row.project_id,
                         service_code=row.service_code,
+                        quota_unit=catalog[row.service_code].quota_unit or "requests",
                         monthly_token_limit=row.monthly_token_limit,
                         status=row.status,
                         period_start=period_start.date().isoformat(),
@@ -360,7 +369,7 @@ class ProjectServiceManagement:
             period_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
             items: list[UserServiceQuotaInfo] = []
             for item in await self._current_catalog():
-                if item.quota_unit != "tokens":
+                if item.quota_unit is None:
                     continue
                 quota = await session.get(UserServiceQuota, (user_id, item.code))
                 allocated = (
@@ -397,6 +406,7 @@ class ProjectServiceManagement:
                         service_code=item.code,
                         name=item.name,
                         models=item.models,
+                        quota_unit=item.quota_unit,
                         monthly_token_limit=monthly_limit,
                         allocated_tokens=allocated,
                         available_tokens=max(0, monthly_limit - allocated),
@@ -415,8 +425,8 @@ class ProjectServiceManagement:
         )
         if catalog_item is None:
             raise ServiceAccessNotFoundError("服务不存在")
-        if catalog_item.quota_unit != "tokens":
-            raise ServiceAccessConflictError("该服务不使用 AI token 额度")
+        if catalog_item.quota_unit is None:
+            raise ServiceAccessConflictError("该服务不使用月度额度")
         if monthly_token_limit < 0:
             raise ServiceAccessConflictError("月度额度不能小于 0")
         async with self._session_factory.begin() as session:

@@ -37,8 +37,8 @@ class ServiceCatalogResponse(BaseModel):
     code: str = Field(description="稳定服务代码。")
     name: str = Field(description="服务展示名称。")
     models: list[str] = Field(description="此服务包含的模型标识。")
-    quota_unit: Literal["tokens"] | None = Field(
-        description="AI 推理服务的计量单位；null 表示数据服务不占用 AI 推理额度。"
+    quota_unit: Literal["tokens", "seconds"] | None = Field(
+        description="月额度计量单位；ASR 使用音频秒数，null 表示不占用月度额度。"
     )
 
     @classmethod
@@ -56,19 +56,21 @@ class ProjectServiceResponse(BaseModel):
 
     project_id: UUID = Field(description="订阅所属项目；调用方无需把该 ID 传给模型网关。")
     service_code: str = Field(description="服务目录代码。")
+    quota_unit: str = Field(description="本服务月额度的计量单位。")
     monthly_token_limit: int | None = Field(
-        description="AI 服务的每月 token 上限；数据服务为 null。"
+        description="每月上限数值，单位由 quota_unit 指定；保留旧字段名以兼容现有客户端。"
     )
     status: Literal["active", "suspended"] = Field(description="服务订阅状态。")
     period_start: str = Field(description="当前用量周期起始日，UTC 月初。")
-    tokens_used: int = Field(description="本周期已确认消耗。")
-    tokens_reserved: int = Field(description="并发请求预留中 token。")
+    tokens_used: int = Field(description="本周期已确认消耗，单位由 quota_unit 指定。")
+    tokens_reserved: int = Field(description="并发请求预留中额度，单位由 quota_unit 指定。")
 
     @classmethod
     def from_info(cls, item: ProjectServiceInfo) -> "ProjectServiceResponse":
         return cls(
             project_id=item.project_id,
             service_code=item.service_code,
+            quota_unit=item.quota_unit,
             monthly_token_limit=item.monthly_token_limit,
             status=item.status,
             period_start=item.period_start,
@@ -86,6 +88,7 @@ class ServiceProjectResponse(BaseModel):
     visibility: Literal["public", "private"]
     owner_id: UUID
     service_code: str
+    quota_unit: str
     monthly_token_limit: int | None
     service_status: Literal["active", "suspended"]
     tokens_used: int
@@ -101,6 +104,7 @@ class ServiceProjectResponse(BaseModel):
             visibility=project.visibility,
             owner_id=project.owner_id,
             service_code=item.service_code,
+            quota_unit=item.quota_unit,
             monthly_token_limit=item.monthly_token_limit,
             service_status=item.status,
             tokens_used=item.tokens_used,
@@ -120,13 +124,13 @@ class ServiceApplicationRequest(BaseModel):
     monthly_token_limit: int | None = Field(
         default=None,
         ge=1,
-        description="AI 推理服务的项目月度 token 上限；数据服务不提供此字段。",
+        description="项目月度额度数值，单位由服务目录 quota_unit 指定；上下文字段不提供此字段。",
     )
 
 
 class ProjectServiceAllocationRequest(BaseModel):
     monthly_token_limit: int = Field(
-        ge=1, description="新的项目月度 token 上限；不能低于当月已用量或超出 owner 个人上限。"
+        ge=1, description="新的项目月度额度数值；单位由服务目录 quota_unit 指定。"
     )
 
 
@@ -136,13 +140,18 @@ class UserServiceQuotaResponse(BaseModel):
     service_code: str = Field(description="服务目录代码。")
     name: str = Field(description="服务展示名称。")
     models: list[str] = Field(description="服务包含的模型。")
+    quota_unit: str = Field(description="额度计量单位，如 tokens 或 seconds。")
     monthly_token_limit: int = Field(
-        description="管理员授予的用户月度总上限；0 表示服务调用暂停，项目分配记录仍可保留。"
+        description="管理员授予的用户月度总上限；数值单位由 quota_unit 指定。"
     )
-    allocated_tokens: int = Field(description="已分配到该用户所有项目的额度合计。")
-    available_tokens: int = Field(description="还能分配给项目的额度。")
-    tokens_used: int = Field(description="该用户所有项目本月实际消耗合计。")
-    tokens_reserved: int = Field(description="该用户所有项目当前请求预留合计。")
+    allocated_tokens: int = Field(
+        description="已分配到该用户所有项目的额度合计，单位由 quota_unit 指定。"
+    )
+    available_tokens: int = Field(description="还能分配给项目的额度，单位由 quota_unit 指定。")
+    tokens_used: int = Field(description="该用户所有项目本月实际消耗合计，单位由 quota_unit 指定。")
+    tokens_reserved: int = Field(
+        description="该用户所有项目当前请求预留合计，单位由 quota_unit 指定。"
+    )
 
     @classmethod
     def from_info(cls, item: UserServiceQuotaInfo) -> "UserServiceQuotaResponse":
@@ -150,6 +159,7 @@ class UserServiceQuotaResponse(BaseModel):
             service_code=item.service_code,
             name=item.name,
             models=list(item.models),
+            quota_unit=item.quota_unit,
             monthly_token_limit=item.monthly_token_limit,
             allocated_tokens=item.allocated_tokens,
             available_tokens=item.available_tokens,

@@ -1299,64 +1299,140 @@ paths:
                 $ref: '#/components/schemas/HTTPValidationError'
       security:
       - HTTPBearer: []
-  /v1/context/templates:
+  /v1/audio/transcriptions:
     post:
       tags:
-      - Project Context Gateway
-      summary: 通过项目 API Key 创建提示词模板
-      description: 项目由 Bearer API Key 确定；API Key 所属成员需要 owner/editor 权限。
-      operationId: create_template_v1_context_templates_post
+      - ASR Gateway
+      summary: OpenAI 兼容音频转写
+      description: 接受 OpenAI Audio Transcriptions multipart/form-data 请求，支持 json、text、verbose_json；当前将完整录音桥接到火山豆包
+        ASR V3 单句识别 WebSocket。
+      operationId: create_transcription_v1_audio_transcriptions_post
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/Body_create_transcription_v1_audio_transcriptions_post'
+        required: true
+      responses:
+        '200':
+          description: 识别文本。根据 response_format 返回 JSON、纯文本或详细 JSON。
+          content:
+            application/json:
+              schema: {}
+        '401':
+          description: 项目 API Key 无效。
+        '422':
+          description: 音频文件、模型或响应格式无效。
+        '429':
+          description: ASR 服务额度不足。
+        '502':
+          description: 上游 ASR 调用失败。
       security:
       - HTTPBearer: []
+  /api/admin/v1/asr/providers:
+    get:
+      tags:
+      - ASR Provider Management
+      summary: 列出 ASR 上游连接
+      operationId: list_providers_api_admin_v1_asr_providers_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/app__services__asr__admin_api__ProviderResponse'
+                type: array
+                title: Response List Providers Api Admin V1 Asr Providers Get
+      security:
+      - HTTPBearer: []
+    post:
+      tags:
+      - ASR Provider Management
+      summary: 添加 ASR 上游连接
+      operationId: create_provider_api_admin_v1_asr_providers_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProviderPayload'
+        required: true
+      responses:
+        '201':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/app__services__asr__admin_api__ProviderResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+      security:
+      - HTTPBearer: []
+  /api/admin/v1/asr/providers/{provider_id}:
+    put:
+      tags:
+      - ASR Provider Management
+      summary: 修改 ASR 上游连接
+      operationId: update_provider_api_admin_v1_asr_providers__provider_id__put
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: provider_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Provider Id
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              type: object
-              required: [category, name, content]
-              properties:
-                category:
-                  type: string
-                  enum: [system, user, assistant]
-                name:
-                  type: string
-                  minLength: 1
-                  maxLength: 200
-                content:
-                  type: string
-                  maxLength: 100000
+              $ref: '#/components/schemas/ProviderUpdatePayload'
       responses:
-        '201':
-          description: 模板创建成功；返回网关生成的模板 ID。
+        '200':
+          description: Successful Response
           content:
             application/json:
               schema:
-                type: object
-                required: [id, project_id, category, name, content, version]
-                properties:
-                  id:
-                    type: string
-                    format: uuid
-                  project_id:
-                    type: string
-                    format: uuid
-                  category:
-                    type: string
-                  name:
-                    type: string
-                  content:
-                    type: string
-                  version:
-                    type: integer
-        '401':
-          description: 缺少或无效的项目 API Key。
-        '403':
-          description: 需要有 owner/editor 权限的项目 API Key。
-        '409':
-          description: 同一模板分类下名称已存在。
+                $ref: '#/components/schemas/app__services__asr__admin_api__ProviderResponse'
         '422':
-          description: 模板字段无效。
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    delete:
+      tags:
+      - ASR Provider Management
+      summary: Delete Provider
+      operationId: delete_provider_api_admin_v1_asr_providers__provider_id__delete
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: provider_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Provider Id
+      responses:
+        '204':
+          description: Successful Response
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /v1/context/templates:
     get:
       tags:
       - Project Context Gateway
@@ -1371,6 +1447,103 @@ paths:
                 title: Response List Templates V1 Context Templates Get
       security:
       - HTTPBearer: []
+    post:
+      tags:
+      - Project Context Gateway
+      summary: 通过项目 API Key 创建提示词模板
+      description: 使用 API Key 确定项目与创建者；仅 owner/editor 创建的 Key 可写入模板。
+      operationId: create_template_v1_context_templates_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TemplateWrite'
+        required: true
+      responses:
+        '201':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TemplateResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+      security:
+      - HTTPBearer: []
+  /v1/context/templates/{template_id}:
+    patch:
+      tags:
+      - Project Context Gateway
+      summary: 通过项目 API Key 修改提示词模板
+      description: 使用 Key 所属成员身份更新模板；版本不匹配时返回 409。
+      operationId: update_template_v1_context_templates__template_id__patch
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: template_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Template Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TemplateUpdate'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TemplateResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    delete:
+      tags:
+      - Project Context Gateway
+      summary: 通过项目 API Key 删除提示词模板
+      description: 使用 Key 所属成员身份软删除模板，防止误删其他项目资源。
+      operationId: delete_template_v1_context_templates__template_id__delete
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: template_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Template Id
+      - name: expected_version
+        in: query
+        required: true
+        schema:
+          type: integer
+          minimum: 1
+          description: 最近读取到的模板版本。
+          title: Expected Version
+        description: 最近读取到的模板版本。
+      responses:
+        '204':
+          description: Successful Response
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
   /v1/context/templates/by-id/{template_id}:
     get:
       tags:
@@ -1402,95 +1575,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
-  /v1/context/templates/{template_id}:
-    patch:
-      tags:
-      - Project Context Gateway
-      summary: 通过项目 API Key 修改提示词模板
-      description: 使用 Key 所属成员身份更新模板；需要 owner/editor 权限并提交当前版本号。
-      operationId: update_template_v1_context_templates__template_id__patch
-      security:
-      - HTTPBearer: []
-      parameters:
-      - name: template_id
-        in: path
-        required: true
-        schema:
-          type: string
-          format: uuid
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [expected_version, name, content]
-              properties:
-                expected_version:
-                  type: integer
-                  minimum: 1
-                name:
-                  type: string
-                  minLength: 1
-                  maxLength: 200
-                content:
-                  type: string
-                  maxLength: 100000
-      responses:
-        '200':
-          description: 修改后的模板
-          content:
-            application/json:
-              schema:
-                type: object
-                required: [id, project_id, category, name, content, version]
-                properties:
-                  id: {type: string, format: uuid}
-                  project_id: {type: string, format: uuid}
-                  category: {type: string}
-                  name: {type: string}
-                  content: {type: string}
-                  version: {type: integer}
-        '401':
-          description: 缺少或无效的项目 API Key。
-        '403':
-          description: 需要有 owner/editor 权限的项目 API Key。
-        '404':
-          description: 模板不存在或不属于此项目。
-        '409':
-          description: 名称冲突或模板版本已过期。
-    delete:
-      tags:
-      - Project Context Gateway
-      summary: 通过项目 API Key 删除提示词模板
-      description: 软删除模板；需要提交最近读取到的版本号。
-      operationId: delete_template_v1_context_templates__template_id__delete
-      security:
-      - HTTPBearer: []
-      parameters:
-      - name: template_id
-        in: path
-        required: true
-        schema:
-          type: string
-          format: uuid
-      - name: expected_version
-        in: query
-        required: true
-        schema:
-          type: integer
-          minimum: 1
-      responses:
-        '204':
-          description: 模板已删除。
-        '401':
-          description: 缺少或无效的项目 API Key。
-        '403':
-          description: 需要有 owner/editor 权限的项目 API Key。
-        '404':
-          description: 模板不存在或不属于此项目。
-        '409':
-          description: 模板版本已过期。
   /v1/context/templates/{category}/{name}:
     get:
       tags:
@@ -2236,7 +2320,7 @@ paths:
             application/json:
               schema:
                 items:
-                  $ref: '#/components/schemas/ProviderResponse'
+                  $ref: '#/components/schemas/app__services__llm__admin_api__ProviderResponse'
                 type: array
                 title: Response List Providers Api Admin V1 Llm Providers Get
       security:
@@ -2259,7 +2343,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ProviderResponse'
+                $ref: '#/components/schemas/app__services__llm__admin_api__ProviderResponse'
         '409':
           description: 相同 Base URL 和 API Key 的 API 已存在。
         '422':
@@ -2299,7 +2383,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ProviderResponse'
+                $ref: '#/components/schemas/app__services__llm__admin_api__ProviderResponse'
         '409':
           description: 修改后会与仓库中已有 API 重复。
         '422':
@@ -2430,64 +2514,108 @@ paths:
       tags:
       - Request Logs and Usage
       summary: 查询当前用户可访问项目的操作日志
-      description: 返回当前用户有权限查看的项目中的日志，普通用户无法通过参数读取无权限项目。
+      description: 查询当前用户可见项目的日志；项目可见范围由应用服务强制执行。
       operationId: list_visible_requests_api_v1_requests_get
       security:
       - HTTPBearer: []
       parameters:
       - name: start_at
         in: query
+        required: false
         schema:
-          type: string
-          format: date-time
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          description: UTC 开始时间，包含。默认最近 7 天。
+          title: Start At
+        description: UTC 开始时间，包含。默认最近 7 天。
       - name: end_at
         in: query
+        required: false
         schema:
-          type: string
-          format: date-time
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          description: UTC 结束时间，不包含。默认当前时间。
+          title: End At
+        description: UTC 结束时间，不包含。默认当前时间。
       - name: project_id
         in: query
+        required: false
         schema:
-          type: string
-          format: uuid
-        description: 可选项目筛选；仅对当前用户可访问的项目生效。
+          anyOf:
+          - type: string
+            format: uuid
+          - type: 'null'
+          description: 可选项目筛选；只能查询当前用户有权限查看的项目。
+          title: Project Id
+        description: 可选项目筛选；只能查询当前用户有权限查看的项目。
       - name: status
         in: query
+        required: false
         schema:
-          type: string
-          enum: [received, succeeded, failed, denied]
+          anyOf:
+          - enum:
+            - received
+            - succeeded
+            - failed
+            - denied
+            type: string
+          - type: 'null'
+          title: Status
       - name: service_code
         in: query
+        required: false
         schema:
-          type: string
-          maxLength: 50
+          anyOf:
+          - type: string
+            maxLength: 50
+          - type: 'null'
+          title: Service Code
       - name: request_id
         in: query
+        required: false
         schema:
-          type: string
-          maxLength: 64
+          anyOf:
+          - type: string
+            maxLength: 64
+          - type: 'null'
+          title: Request Id
+      - name: cursor
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            maxLength: 512
+          - type: 'null'
+          title: Cursor
       - name: page
         in: query
+        required: false
         schema:
           type: integer
           minimum: 1
           default: 1
+          title: Page
       - name: page_size
         in: query
+        required: false
         schema:
           type: integer
-          minimum: 1
           maximum: 100
+          minimum: 1
           default: 50
+          title: Page Size
       responses:
         '200':
-          description: 当前用户可访问项目的分页日志
+          description: Successful Response
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/RequestLogPageResponse'
-        '401':
-          description: 需要有效登录令牌。
         '422':
           description: Validation Error
           content:
@@ -2499,7 +2627,7 @@ paths:
       tags:
       - Request Logs and Usage
       summary: 查询当前用户可访问项目中的单条操作日志
-      description: 请求不属于当前用户可访问项目时返回未找到。
+      description: Return one log only if its project is visible to the current user.
       operationId: get_visible_request_api_v1_requests__request_id__get
       security:
       - HTTPBearer: []
@@ -2512,15 +2640,17 @@ paths:
           title: Request Id
       responses:
         '200':
-          description: 操作日志详情
+          description: Successful Response
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/RequestLogResponse'
-        '401':
-          description: 需要有效登录令牌。
-        '404':
-          description: 日志不存在或无权查看。
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
   /api/v1/projects/{project_id}/requests:
     get:
       tags:
@@ -3132,6 +3262,55 @@ components:
       - revoked_at
       - created_at
       title: ApiKeyResponse
+    Body_create_transcription_v1_audio_transcriptions_post:
+      properties:
+        file:
+          type: string
+          contentMediaType: application/octet-stream
+          title: File
+          description: 必填。当前支持 WAV、MP3、OGG、M4A；裸 PCM 暂不支持。
+        model:
+          type: string
+          maxLength: 200
+          minLength: 1
+          title: Model
+        language:
+          anyOf:
+          - type: string
+            maxLength: 20
+          - type: 'null'
+          title: Language
+          description: 可省略，示例：zh-CN。
+          examples:
+          - zh-CN
+        prompt:
+          anyOf:
+          - type: string
+            maxLength: 4000
+          - type: 'null'
+          title: Prompt
+          description: 可选识别提示，例如领域词汇或专有名词。
+        response_format:
+          type: string
+          enum:
+          - json
+          - text
+          - verbose_json
+          title: Response Format
+          description: 可选；json 为默认值。当前不支持 srt、vtt。
+          default: json
+        temperature:
+          type: number
+          maximum: 0.0
+          minimum: 0.0
+          title: Temperature
+          description: 可省略；当前上游仅支持 0。
+          default: 0
+      type: object
+      required:
+      - file
+      - model
+      title: Body_create_transcription_v1_audio_transcriptions_post
     ChatCompletionRequest:
       properties:
         model:
@@ -3617,8 +3796,7 @@ components:
       - profile
       title: ProfileWrite
       examples:
-      - expected_version: 1
-        profile:
+      - profile:
           interests:
           - 旅行
           - 摄影
@@ -3823,7 +4001,7 @@ components:
           type: integer
           minimum: 1.0
           title: Monthly Token Limit
-          description: 新的项目月度 token 上限；不能低于当月已用量或超出 owner 个人上限。
+          description: 新的项目月度额度数值；单位由服务目录 quota_unit 指定。
       type: object
       required:
       - monthly_token_limit
@@ -3839,12 +4017,16 @@ components:
           type: string
           title: Service Code
           description: 服务目录代码。
+        quota_unit:
+          type: string
+          title: Quota Unit
+          description: 本服务月额度的计量单位。
         monthly_token_limit:
           anyOf:
           - type: integer
           - type: 'null'
           title: Monthly Token Limit
-          description: AI 服务的每月 token 上限；数据服务为 null。
+          description: 每月上限数值，单位由 quota_unit 指定；保留旧字段名以兼容现有客户端。
         status:
           type: string
           enum:
@@ -3859,15 +4041,16 @@ components:
         tokens_used:
           type: integer
           title: Tokens Used
-          description: 本周期已确认消耗。
+          description: 本周期已确认消耗，单位由 quota_unit 指定。
         tokens_reserved:
           type: integer
           title: Tokens Reserved
-          description: 并发请求预留中 token。
+          description: 并发请求预留中额度，单位由 quota_unit 指定。
       type: object
       required:
       - project_id
       - service_code
+      - quota_unit
       - monthly_token_limit
       - status
       - period_start
@@ -3918,79 +4101,55 @@ components:
           title: Tags
       type: object
       title: ProjectUpdateRequest
-    ProviderResponse:
+    ProviderPayload:
       properties:
-        id:
-          type: string
-          format: uuid
-          title: Id
         name:
           type: string
+          maxLength: 100
+          minLength: 1
           title: Name
-          description: 管理员内部识别该 API 连接的名称。
+          description: 管理员用于区分连接的名称。
         supplier_name:
           type: string
+          const: 火山引擎
           title: Supplier Name
-          description: 面向用户展示的供应商名称；同供应商连接可重复。
+          description: 当前仅支持火山引擎。
+          default: 火山引擎
         route_prefix:
-          anyOf:
-          - type: string
-          - type: 'null'
+          type: string
+          const: volc
           title: Route Prefix
-          description: 可选模型路由前缀；相同前缀的连接组成独立故障切换组。
-        base_url:
+          description: 客户端模型路由前缀。
+          default: volc
+        resource_id:
           type: string
-          title: Base Url
-        status:
+          maxLength: 200
+          minLength: 1
+          title: Resource Id
+          description: 火山 ASR Resource ID。
+        file_transcription_url:
           type: string
-          enum:
-          - active
-          - disabled
-          title: Status
-        priority:
-          type: integer
-          title: Priority
-          description: 越小越先尝试；上游失败时按此顺序切换。
-        api_key_configured:
-          type: boolean
-          title: Api Key Configured
+          maxLength: 500
+          title: File Transcription Url
+          description: 整段录音文件转写使用的 WebSocket URL。
+        realtime_url:
+          type: string
+          maxLength: 500
+          title: Realtime Url
+          description: 实时音频流识别使用的 WebSocket URL。
         api_key:
-          anyOf:
-          - type: string
-          - type: 'null'
+          type: string
+          maxLength: 4000
+          minLength: 1
           title: Api Key
-          description: 供应商 API Key 明文，仅管理员接口返回；未配置解密密钥时为 null。
-        last_tested_at:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Last Tested At
-        last_test_success:
-          anyOf:
-          - type: boolean
-          - type: 'null'
-          title: Last Test Success
-        last_test_message:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Last Test Message
       type: object
       required:
-      - id
       - name
-      - supplier_name
-      - route_prefix
-      - base_url
-      - status
-      - priority
-      - api_key_configured
+      - resource_id
+      - file_transcription_url
+      - realtime_url
       - api_key
-      - last_tested_at
-      - last_test_success
-      - last_test_message
-      title: ProviderResponse
-      description: 管理员连接响应；包含仅管理员可见的解密 API Key，不返回数据库密文。
+      title: ProviderPayload
     ProviderTestRequest:
       properties:
         model:
@@ -4021,6 +4180,62 @@ components:
       - tested_at
       title: ProviderTestResponse
       description: 供应商连通性测试结果。
+    ProviderUpdatePayload:
+      properties:
+        name:
+          anyOf:
+          - type: string
+            maxLength: 100
+            minLength: 1
+          - type: 'null'
+          title: Name
+        supplier_name:
+          anyOf:
+          - type: string
+            const: 火山引擎
+          - type: 'null'
+          title: Supplier Name
+        route_prefix:
+          anyOf:
+          - type: string
+            const: volc
+          - type: 'null'
+          title: Route Prefix
+        resource_id:
+          anyOf:
+          - type: string
+            maxLength: 200
+            minLength: 1
+          - type: 'null'
+          title: Resource Id
+        file_transcription_url:
+          anyOf:
+          - type: string
+            maxLength: 500
+          - type: 'null'
+          title: File Transcription Url
+        realtime_url:
+          anyOf:
+          - type: string
+            maxLength: 500
+          - type: 'null'
+          title: Realtime Url
+        api_key:
+          anyOf:
+          - type: string
+            maxLength: 4000
+          - type: 'null'
+          title: Api Key
+        status:
+          anyOf:
+          - type: string
+            enum:
+            - active
+            - disabled
+          - type: 'null'
+          title: Status
+      type: object
+      title: ProviderUpdatePayload
     PublicProviderCatalogResponse:
       properties:
         groups:
@@ -4557,7 +4772,7 @@ components:
             minimum: 1.0
           - type: 'null'
           title: Monthly Token Limit
-          description: AI 推理服务的项目月度 token 上限；数据服务不提供此字段。
+          description: 项目月度额度数值，单位由服务目录 quota_unit 指定；上下文字段不提供此字段。
       type: object
       required:
       - service_code
@@ -4581,10 +4796,12 @@ components:
         quota_unit:
           anyOf:
           - type: string
-            const: tokens
+            enum:
+            - tokens
+            - seconds
           - type: 'null'
           title: Quota Unit
-          description: AI 推理服务的计量单位；null 表示数据服务不占用 AI 推理额度。
+          description: 月额度计量单位；ASR 使用音频秒数，null 表示不占用月度额度。
       type: object
       required:
       - code
@@ -4643,6 +4860,9 @@ components:
         service_code:
           type: string
           title: Service Code
+        quota_unit:
+          type: string
+          title: Quota Unit
         monthly_token_limit:
           anyOf:
           - type: integer
@@ -4668,6 +4888,7 @@ components:
       - visibility
       - owner_id
       - service_code
+      - quota_unit
       - monthly_token_limit
       - service_status
       - tokens_used
@@ -4921,6 +5142,93 @@ components:
       - total_pages
       title: TechnicalLogPageResponse
       description: 技术日志分页响应，返回页码、页容量、匹配总数和总页数。
+    TemplateResponse:
+      properties:
+        id:
+          type: string
+          format: uuid
+          title: Id
+        project_id:
+          type: string
+          format: uuid
+          title: Project Id
+        category:
+          type: string
+          title: Category
+        name:
+          type: string
+          title: Name
+        content:
+          type: string
+          title: Content
+        version:
+          type: integer
+          title: Version
+      type: object
+      required:
+      - id
+      - project_id
+      - category
+      - name
+      - content
+      - version
+      title: TemplateResponse
+      description: 模板创建或读取时返回的项目资源信息。
+    TemplateUpdate:
+      properties:
+        expected_version:
+          type: integer
+          minimum: 1.0
+          title: Expected Version
+          description: 最近读取到的模板版本。
+        name:
+          type: string
+          maxLength: 200
+          minLength: 1
+          title: Name
+          description: 项目内唯一的模板名称。
+        content:
+          type: string
+          maxLength: 100000
+          title: Content
+          description: 模板正文，最多 100,000 字符。
+      type: object
+      required:
+      - expected_version
+      - name
+      - content
+      title: TemplateUpdate
+      description: 携带当前版本更新模板名称与正文。
+    TemplateWrite:
+      properties:
+        category:
+          type: string
+          enum:
+          - system
+          - user
+          - assistant
+          title: Category
+          description: 模板角色分类。
+          examples:
+          - system
+        name:
+          type: string
+          maxLength: 200
+          minLength: 1
+          title: Name
+          description: 项目内唯一的模板名称。
+        content:
+          type: string
+          maxLength: 100000
+          title: Content
+          description: 模板正文，最多 100,000 字符。
+      type: object
+      required:
+      - category
+      - name
+      - content
+      title: TemplateWrite
+      description: 通过项目 API Key 创建项目提示词模板。
     TokenResponse:
       properties:
         access_token:
@@ -5028,31 +5336,36 @@ components:
           type: array
           title: Models
           description: 服务包含的模型。
+        quota_unit:
+          type: string
+          title: Quota Unit
+          description: 额度计量单位，如 tokens 或 seconds。
         monthly_token_limit:
           type: integer
           title: Monthly Token Limit
-          description: 管理员授予的用户月度总上限；0 表示服务调用暂停，项目分配记录仍可保留。
+          description: 管理员授予的用户月度总上限；数值单位由 quota_unit 指定。
         allocated_tokens:
           type: integer
           title: Allocated Tokens
-          description: 已分配到该用户所有项目的额度合计。
+          description: 已分配到该用户所有项目的额度合计，单位由 quota_unit 指定。
         available_tokens:
           type: integer
           title: Available Tokens
-          description: 还能分配给项目的额度。
+          description: 还能分配给项目的额度，单位由 quota_unit 指定。
         tokens_used:
           type: integer
           title: Tokens Used
-          description: 该用户所有项目本月实际消耗合计。
+          description: 该用户所有项目本月实际消耗合计，单位由 quota_unit 指定。
         tokens_reserved:
           type: integer
           title: Tokens Reserved
-          description: 该用户所有项目当前请求预留合计。
+          description: 该用户所有项目当前请求预留合计，单位由 quota_unit 指定。
       type: object
       required:
       - service_code
       - name
       - models
+      - quota_unit
       - monthly_token_limit
       - allocated_tokens
       - available_tokens
@@ -5086,6 +5399,136 @@ components:
       - msg
       - type
       title: ValidationError
+    app__services__asr__admin_api__ProviderResponse:
+      properties:
+        id:
+          type: string
+          format: uuid
+          title: Id
+        name:
+          type: string
+          title: Name
+        supplier_name:
+          type: string
+          title: Supplier Name
+        route_prefix:
+          type: string
+          const: volc
+          title: Route Prefix
+        resource_id:
+          type: string
+          title: Resource Id
+        file_transcription_url:
+          type: string
+          title: File Transcription Url
+        realtime_url:
+          type: string
+          title: Realtime Url
+        status:
+          type: string
+          enum:
+          - active
+          - disabled
+          title: Status
+        api_key_configured:
+          type: boolean
+          title: Api Key Configured
+        api_key:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Api Key
+          description: 明文仅在管理员 API 响应中返回。
+        created_at:
+          type: string
+          title: Created At
+      type: object
+      required:
+      - id
+      - name
+      - supplier_name
+      - route_prefix
+      - resource_id
+      - file_transcription_url
+      - realtime_url
+      - status
+      - api_key_configured
+      - api_key
+      - created_at
+      title: ProviderResponse
+    app__services__llm__admin_api__ProviderResponse:
+      properties:
+        id:
+          type: string
+          format: uuid
+          title: Id
+        name:
+          type: string
+          title: Name
+          description: 管理员内部识别该 API 连接的名称。
+        supplier_name:
+          type: string
+          title: Supplier Name
+          description: 面向用户展示的供应商名称；同供应商连接可重复。
+        route_prefix:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Route Prefix
+          description: 可选模型路由前缀；相同前缀的连接组成独立故障切换组。
+        base_url:
+          type: string
+          title: Base Url
+        status:
+          type: string
+          enum:
+          - active
+          - disabled
+          title: Status
+        priority:
+          type: integer
+          title: Priority
+          description: 越小越先尝试；上游失败时按此顺序切换。
+        api_key_configured:
+          type: boolean
+          title: Api Key Configured
+        api_key:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Api Key
+          description: 供应商 API Key 明文，仅管理员接口返回；未配置解密密钥时为 null。
+        last_tested_at:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Last Tested At
+        last_test_success:
+          anyOf:
+          - type: boolean
+          - type: 'null'
+          title: Last Test Success
+        last_test_message:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Last Test Message
+      type: object
+      required:
+      - id
+      - name
+      - supplier_name
+      - route_prefix
+      - base_url
+      - status
+      - priority
+      - api_key_configured
+      - api_key
+      - last_tested_at
+      - last_test_success
+      - last_test_message
+      title: ProviderResponse
+      description: 管理员连接响应；包含仅管理员可见的解密 API Key，不返回数据库密文。
   securitySchemes:
     HTTPBearer:
       type: http

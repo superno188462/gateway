@@ -23,6 +23,9 @@ from app.resources.application import ResourceService
 from app.resources.infrastructure import PostgresResourceRepository
 from app.security import JwtService, PasswordService
 from app.service_management.application import ProjectServiceManagement
+from app.services.asr.application import AsrGatewayService
+from app.services.asr.catalog import ASR_SERVICE
+from app.services.asr.configuration import AsrConfigurationService
 from app.services.llm.application import LlmGatewayService
 from app.services.llm.catalog import LLM_SERVICE
 from app.services.llm.configuration import LlmConfigurationService
@@ -57,6 +60,8 @@ class AppContainer:
     service_management: ProjectServiceManagement | None
     llm_gateway_service: LlmGatewayService | None
     llm_configuration_service: LlmConfigurationService | None
+    asr_configuration_service: AsrConfigurationService | None
+    asr_gateway_service: AsrGatewayService | None
     request_log_service: RequestLogService | None
     request_recorder: GatewayRequestRecorder | None
     technical_log_service: TechnicalLogService
@@ -91,6 +96,8 @@ class AppContainer:
                 service_management=None,
                 llm_gateway_service=None,
                 llm_configuration_service=None,
+                asr_configuration_service=None,
+                asr_gateway_service=None,
                 request_log_service=None,
                 request_recorder=None,
                 technical_log_service=TechnicalLogService(settings.log_file_path),
@@ -120,6 +127,14 @@ class AppContainer:
             if settings.llm_provider_secret_key is not None
             else None,
         )
+        asr_configuration_service = (
+            AsrConfigurationService(
+                session_factory,
+                ProviderSecretCipher(settings.llm_provider_secret_key.get_secret_value()),
+            )
+            if settings.llm_provider_secret_key is not None
+            else None
+        )
         request_log_service = RequestLogService(session_factory)
         request_recorder = GatewayRequestRecorder(session_factory)
 
@@ -132,6 +147,14 @@ class AppContainer:
             )
             return (
                 ServiceCatalogItem(LLM_SERVICE.code, LLM_SERVICE.name, models),
+                ServiceCatalogItem(
+                    ASR_SERVICE.code,
+                    ASR_SERVICE.name,
+                    await asr_configuration_service.active_models()
+                    if asr_configuration_service is not None
+                    else (),
+                    quota_unit=ASR_SERVICE.quota_unit,
+                ),
                 PROJECT_CONTEXT_SERVICE,
             )
 
@@ -152,7 +175,10 @@ class AppContainer:
                 session_factory,
                 password_service,
                 jwt_service,
-                {"mock-llm-v1": settings.default_llm_monthly_token_limit},
+                {
+                    "mock-llm-v1": settings.default_llm_monthly_token_limit,
+                    "asr-v1": settings.default_asr_monthly_quota_seconds,
+                },
             ),
             project_service=ProjectService(session_factory),
             resource_service=ResourceService(PostgresResourceRepository(session_factory)),
@@ -173,6 +199,16 @@ class AppContainer:
                 request_recorder,
             ),
             llm_configuration_service=llm_configuration_service,
+            asr_configuration_service=asr_configuration_service,
+            asr_gateway_service=(
+                AsrGatewayService(
+                    session_factory,
+                    asr_configuration_service,
+                    request_recorder,
+                )
+                if asr_configuration_service is not None
+                else None
+            ),
             request_log_service=request_log_service,
             request_recorder=request_recorder,
             technical_log_service=TechnicalLogService(settings.log_file_path),
@@ -315,6 +351,35 @@ def get_llm_configuration_service(request: Request) -> LlmConfigurationService:
                 "code": "llm_provider_config_unavailable",
                 "message": "请先配置 LLM_PROVIDER_SECRET_KEY",
             },
+        )
+    return service
+
+
+def get_asr_configuration_service(request: Request) -> AsrConfigurationService:
+    """注入 ASR 连接配置；复用供应商密钥服务端加密主密钥。"""
+    from fastapi import HTTPException, status
+
+    service = get_container(request).asr_configuration_service
+    if service is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "code": "asr_provider_config_unavailable",
+                "message": "请先配置 LLM_PROVIDER_SECRET_KEY",
+            },
+        )
+    return service
+
+
+def get_asr_gateway_service(request: Request) -> AsrGatewayService:
+    """注入 ASR 请求生命周期服务。"""
+    service = get_container(request).asr_gateway_service
+    if service is None:
+        from fastapi import HTTPException, status
+
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"code": "asr_unavailable", "message": "ASR 服务尚未完成供应商配置"},
         )
     return service
 

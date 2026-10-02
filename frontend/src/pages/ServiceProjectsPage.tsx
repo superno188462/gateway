@@ -4,13 +4,12 @@ import { ApiClientError, apiClient, type ServiceProjectPage } from "../api/clien
 import { useAuth } from "../auth/useAuth";
 
 const PAGE_SIZE = 20;
-const LLM_SERVICE_CODE = "mock-llm-v1";
 
 function formatTokens(value: number): string {
   return new Intl.NumberFormat("zh-CN").format(value);
 }
 
-export function ServiceProjectsPage() {
+export function ServiceProjectsPage({ serviceCode = "mock-llm-v1", serviceName = "LLM" }: { serviceCode?: string; serviceName?: string }) {
   const { token, user } = useAuth();
   const [page, setPage] = useState<ServiceProjectPage | null>(null);
   const [offset, setOffset] = useState(0);
@@ -22,13 +21,13 @@ export function ServiceProjectsPage() {
     setLoading(true);
     setError(null);
     try {
-      setPage(await apiClient.getServiceProjects(token, LLM_SERVICE_CODE, offset, PAGE_SIZE));
+      setPage(await apiClient.getServiceProjects(token, serviceCode, offset, PAGE_SIZE));
     } catch (reason) {
-      setError(reason instanceof ApiClientError ? reason.message : "LLM 服务项目读取失败，请稍后重试。");
+      setError(reason instanceof ApiClientError ? reason.message : `${serviceName} 服务项目读取失败，请稍后重试。`);
     } finally {
       setLoading(false);
     }
-  }, [offset, token]);
+  }, [offset, serviceCode, serviceName, token]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -36,15 +35,15 @@ export function ServiceProjectsPage() {
     <section className="page-content" aria-labelledby="service-projects-title">
       <div className="intro-row">
         <div>
-          <p className="page-kicker">服务 · LLM</p>
-          <h2 id="service-projects-title">已开通 LLM 服务的项目</h2>
-          <p className="page-description">这里只显示你有权限查看且已经申请 LLM 服务的项目。</p>
+          <p className="page-kicker">服务 · {serviceName}</p>
+          <h2 id="service-projects-title">已开通 {serviceName} 服务的项目</h2>
+          <p className="page-description">这里只显示你有权限查看且已经申请 {serviceName} 服务的项目。</p>
         </div>
         <button className="secondary-button" disabled={loading} onClick={() => void load()} type="button">{loading ? "刷新中…" : "刷新"}</button>
       </div>
       {error && <p className="form-error" role="alert">{error}</p>}
-      {loading && <div className="empty-state">正在读取已开通 LLM 服务的项目…</div>}
-      {!loading && page?.items.length === 0 && <div className="empty-state">目前没有已开通 LLM 服务的可访问项目。</div>}
+      {loading && <div className="empty-state">正在读取已开通 {serviceName} 服务的项目…</div>}
+      {!loading && page?.items.length === 0 && <div className="empty-state">目前没有已开通 {serviceName} 服务的可访问项目。</div>}
       <div className="context-service-projects">
         {page?.items.map((project) => (
           <article className="project-detail-panel context-service-project" key={project.id}>
@@ -57,9 +56,9 @@ export function ServiceProjectsPage() {
               <Link className="primary-button project-open-button" to={`/projects/${project.id}`}>打开项目</Link>
             </div>
             <div className="service-project-summary-grid">
-              <span>项目月额度<strong>{project.monthly_token_limit === null ? "不适用" : `${formatTokens(project.monthly_token_limit)} tokens`}</strong></span>
-              <span>本月已用<strong>{formatTokens(project.tokens_used)} tokens</strong></span>
-              <span>处理中预留<strong>{formatTokens(project.tokens_reserved)} tokens</strong></span>
+              <span>项目月额度<strong>{project.monthly_token_limit === null ? "不适用" : `${formatTokens(project.monthly_token_limit)} ${serviceName === "ASR" ? "秒" : "tokens"}`}</strong></span>
+              <span>本月已用<strong>{formatTokens(project.tokens_used)} {serviceName === "ASR" ? "秒" : "tokens"}</strong></span>
+              <span>处理中预留<strong>{formatTokens(project.tokens_reserved)} {serviceName === "ASR" ? "秒" : "tokens"}</strong></span>
               <span>服务状态<strong>{project.service_status === "active" ? "运行中" : "已暂停"}</strong></span>
             </div>
           </article>

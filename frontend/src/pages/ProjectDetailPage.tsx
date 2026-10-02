@@ -212,13 +212,13 @@ export function ProjectDetailPage() {
     if (!token || !projectId || savingServiceCode) return;
     const monthlyTokenLimit = Number(serviceAllocationInputs[quota.service_code]);
     if (!Number.isSafeInteger(monthlyTokenLimit) || monthlyTokenLimit < 1) {
-      setServiceError("请输入大于 0 的整数 token 上限。");
+      setServiceError(`请输入大于 0 的整数${quota.quota_unit === "seconds" ? "秒数" : "token 上限"}。`);
       return;
     }
     const existing = projectServices.find((item) => item.service_code === quota.service_code);
     const maximum = quota.available_tokens + (existing?.monthly_token_limit ?? 0);
     if (monthlyTokenLimit > maximum) {
-      setServiceError(`此项目最多可分配 ${new Intl.NumberFormat("zh-CN").format(maximum)} tokens；请先在个人服务页增加可用额度或调整其他项目。`);
+      setServiceError(`此项目最多可分配 ${new Intl.NumberFormat("zh-CN").format(maximum)} ${quota.quota_unit === "seconds" ? "秒" : "tokens"}；请先在个人服务页增加可用额度或调整其他项目。`);
       return;
     }
     setSavingServiceCode(quota.service_code);
@@ -391,14 +391,14 @@ export function ProjectDetailPage() {
                           <span>
                             {allocation ? "已开通" : "未申请"} · {quota.monthly_token_limit === 0
                               ? "个人额度为 0，需联系管理员开通"
-                              : `个人可分配 ${new Intl.NumberFormat("zh-CN").format(maximum)} tokens`}
+                              : `个人可分配 ${new Intl.NumberFormat("zh-CN").format(maximum)} ${quota.quota_unit === "seconds" ? "秒" : "tokens"}`}
                           </span>
                         </div>
                         <div className="project-service-controls" hidden={!isExpanded} id={controlsId}>
                             <label className="project-service-limit">
-                              <span>项目月上限</span>
+                              <span>项目月上限（{quota.quota_unit === "seconds" ? "秒" : "tokens"}）</span>
                               <input
-                                aria-label={`${quota.name} 项目月 token 上限`}
+                                aria-label={`${quota.name} 项目月${quota.quota_unit === "seconds" ? "秒数" : "token 上限"}`}
                                 disabled={!allocation && quota.available_tokens < 1}
                                 inputMode="numeric"
                                 min={1}
@@ -406,7 +406,7 @@ export function ProjectDetailPage() {
                                   ...current,
                                   [quota.service_code]: event.target.value,
                                 }))}
-                                placeholder="输入 token 数"
+                                placeholder={quota.quota_unit === "seconds" ? "输入秒数" : "输入 token 数"}
                                 type="number"
                                 value={serviceAllocationInputs[quota.service_code] ?? ""}
                               />
@@ -421,7 +421,7 @@ export function ProjectDetailPage() {
                             </button>
                             {allocation && (
                               <small className="project-service-usage">
-                                本月已用 {new Intl.NumberFormat("zh-CN").format(allocation.tokens_used)} · 处理中预留 {new Intl.NumberFormat("zh-CN").format(allocation.tokens_reserved)} tokens
+                                本月已用 {new Intl.NumberFormat("zh-CN").format(allocation.tokens_used)} · 处理中预留 {new Intl.NumberFormat("zh-CN").format(allocation.tokens_reserved)} {quota.quota_unit === "seconds" ? "秒" : "tokens"}
                               </small>
                             )}
                         </div>

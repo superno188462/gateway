@@ -11,6 +11,7 @@ import { ProjectCreatePage } from "./pages/ProjectCreatePage";
 import { ProjectApiKeysPage } from "./pages/ProjectApiKeysPage";
 import { MyServicesPage } from "./pages/MyServicesPage";
 import { LlmProvidersPage } from "./pages/LlmProvidersPage";
+import { AsrProvidersPage } from "./pages/AsrProvidersPage";
 import { DashboardPage } from "./pages/DashboardPage";
 import { RequestLogsPage } from "./pages/RequestLogsPage";
 import { SystemLogsPage } from "./pages/SystemLogsPage";
@@ -30,6 +31,12 @@ function AppShell() {
   const [servicesExpanded, setServicesExpanded] = useState(true);
   const pageTitle = ["/services", "/services/llm", "/account/services"].includes(location.pathname)
     ? "LLM 服务"
+    : location.pathname === "/services/asr"
+      ? "ASR 服务"
+      : location.pathname === "/services/llm/projects"
+        ? "LLM 服务项目"
+        : location.pathname === "/services/asr/projects"
+          ? "ASR 服务项目"
     : location.pathname === "/services/context"
       ? "上下文管理 · 项目"
       : location.pathname.startsWith("/services/context/")
@@ -42,8 +49,10 @@ function AppShell() {
       ? "运行状态"
     : location.pathname === "/"
       ? "仪表盘"
-    : location.pathname === "/admin/llm/providers"
+      : location.pathname === "/admin/llm/providers"
       ? "LLM API"
+      : location.pathname === "/admin/asr/providers"
+        ? "ASR API"
       : location.pathname === "/projects/new"
     ? "创建项目"
     : location.pathname.endsWith("/keys")
@@ -89,6 +98,7 @@ function AppShell() {
           </div>
           {servicesExpanded && <div className="nav-service-children">
             <NavLink className={({ isActive }) => `nav-item nav-item-child${isActive ? " nav-item-active" : ""}`} to="/services/llm">LLM</NavLink>
+            <NavLink className={({ isActive }) => `nav-item nav-item-child${isActive ? " nav-item-active" : ""}`} to="/services/asr">ASR</NavLink>
             <NavLink className={({ isActive }) => `nav-item nav-item-child${isActive ? " nav-item-active" : ""}`} to="/services/context">上下文管理</NavLink>
           </div>}
           {user?.role === "admin" && (
@@ -110,6 +120,12 @@ function AppShell() {
                 to="/admin/llm/providers"
               >
                 LLM API
+              </NavLink>
+              <NavLink
+                className={({ isActive }) => `nav-item${isActive ? " nav-item-active" : ""}`}
+                to="/admin/asr/providers"
+              >
+                ASR API
               </NavLink>
             </>
           )}
@@ -150,9 +166,12 @@ function AppShell() {
           <Route element={<RequestLogsPage />} path="/projects/:projectId/logs" />
           <Route element={<MyServicesPage />} path="/services" />
           <Route element={<MyServicesPage />} path="/services/llm" />
+          <Route element={<MyServicesPage />} path="/services/asr" />
           <Route element={<ServiceProjectsPage />} path="/services/llm/projects" />
+          <Route element={<ServiceProjectsPage serviceCode="asr-v1" serviceName="ASR" />} path="/services/asr/projects" />
           <Route element={<Navigate replace to="/services/llm" />} path="/account/services" />
           <Route element={user?.role === "admin" ? <LlmProvidersPage /> : <Navigate replace to="/" />} path="/admin/llm/providers" />
+          <Route element={user?.role === "admin" ? <AsrProvidersPage /> : <Navigate replace to="/" />} path="/admin/asr/providers" />
           <Route element={<Navigate replace to="/" />} path="*" />
         </Routes>
       </main>

@@ -54,6 +54,14 @@ class Settings(BaseSettings):
         le=2_147_483_647,
         description="新注册用户默认 LLM 月 token 上限；0 表示不自动授予。",
     )
+    default_asr_monthly_quota_seconds: int = Field(
+        default=0,
+        ge=0,
+        le=2_147_483_647,
+        description=(
+            "新注册用户默认 ASR 服务月度音频秒数；独立于 LLM token 总额度，0 表示不自动授予。"
+        ),
+    )
     jwt_access_token_expire_minutes: int = Field(default=30, ge=5, le=1440)
 
     @model_validator(mode="after")

@@ -76,6 +76,7 @@ export type ApiKey = {
 export type ProjectService = {
   project_id: string | null;
   service_code: string;
+  quota_unit: string;
   monthly_token_limit: number | null;
   status: "active" | "suspended";
   period_start: string;
@@ -106,6 +107,7 @@ export type ContextProjectPage = {
 
 export type ServiceProject = Pick<Project, "id" | "name" | "description" | "visibility" | "owner_id"> & {
   service_code: string;
+  quota_unit: string;
   monthly_token_limit: number | null;
   service_status: "active" | "suspended";
   tokens_used: number;
@@ -153,6 +155,7 @@ export type UserServiceQuota = {
   service_code: string;
   name: string;
   models: string[];
+  quota_unit: string;
   monthly_token_limit: number;
   allocated_tokens: number;
   available_tokens: number;
@@ -182,6 +185,22 @@ export type LlmProviderTestResult = {
   success: boolean;
   message: string;
   tested_at: string;
+};
+
+/** 管理员配置的 ASR 上游连接。 */
+export type AsrProvider = {
+  id: string;
+  name: string;
+  supplier_name: string;
+  route_prefix: string | null;
+  model_name: string;
+  resource_id: string;
+  file_transcription_url: string;
+  realtime_url: string;
+  status: "active" | "disabled";
+  api_key_configured: boolean;
+  api_key: string | null;
+  created_at: string;
 };
 
 /** 一条不含密钥、提示词和回复正文的项目操作日志。 */
@@ -624,4 +643,23 @@ export const apiClient = {
       method: "POST",
       body: JSON.stringify({ model }),
     }, token),
+  getAsrProviders: (token: string) =>
+    request<AsrProvider[]>("/admin/v1/asr/providers", {}, token),
+  createAsrProvider: (
+    token: string,
+    payload: Pick<AsrProvider, "name" | "supplier_name" | "model_name" | "resource_id" | "file_transcription_url" | "realtime_url"> & { route_prefix?: string | null; api_key: string },
+  ) => request<AsrProvider>("/admin/v1/asr/providers", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  }, token),
+  updateAsrProvider: (
+    token: string,
+    providerId: string,
+    payload: Partial<Pick<AsrProvider, "name" | "supplier_name" | "route_prefix" | "model_name" | "resource_id" | "file_transcription_url" | "realtime_url" | "status">> & { api_key?: string },
+  ) => request<AsrProvider>(`/admin/v1/asr/providers/${providerId}`, {
+    method: "PUT",
+    body: JSON.stringify(payload),
+  }, token),
+  deleteAsrProvider: (token: string, providerId: string) =>
+    request<void>(`/admin/v1/asr/providers/${providerId}`, { method: "DELETE" }, token),
 };

@@ -558,3 +558,42 @@ class LlmModelConfig(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
     )
+
+
+class AsrProviderConfig(Base):
+    """管理员配置的 ASR 上游连接；供应商 API Key 仅保存密文。"""
+
+    __tablename__ = "asr_provider_configs"
+    __table_args__ = (
+        CheckConstraint("status IN ('active', 'disabled')", name="ck_asr_provider_configs_status"),
+        CheckConstraint("route_prefix = 'volc'", name="ck_asr_provider_configs_route_prefix_volc"),
+        Index("ix_asr_provider_configs_route_status", "route_prefix", "status"),
+        Index(
+            "ix_asr_provider_configs_model_route_status",
+            "route_prefix",
+            "model_name",
+            "status",
+        ),
+        UniqueConstraint("api_fingerprint", name="uq_asr_provider_configs_api_fingerprint"),
+    )
+
+    id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), primary_key=True, default=uuid4)
+    name: Mapped[str] = mapped_column(String(100), nullable=False)
+    supplier_name: Mapped[str] = mapped_column(String(100), nullable=False)
+    route_prefix: Mapped[str] = mapped_column(String(64), nullable=False)
+    model_name: Mapped[str] = mapped_column(
+        String(200), nullable=False, server_default="doubao-seed-asr-2.0"
+    )
+    resource_id: Mapped[str] = mapped_column(String(200), nullable=False)
+    file_transcription_url: Mapped[str] = mapped_column(String(500), nullable=False)
+    realtime_url: Mapped[str] = mapped_column(String(500), nullable=False)
+    encrypted_api_key: Mapped[str] = mapped_column(Text, nullable=False)
+    api_fingerprint: Mapped[str | None] = mapped_column(String(64))
+    status: Mapped[str] = mapped_column(String(20), nullable=False, server_default="active")
+    priority: Mapped[int] = mapped_column(Integer, nullable=False, server_default="100")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )

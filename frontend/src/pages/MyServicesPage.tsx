@@ -23,6 +23,7 @@ export function MyServicesPage() {
   const [lookupValue, setLookupValue] = useState("");
   const [targetUser, setTargetUser] = useState<{ id: string; username: string; role: "admin" | "user" } | null>(null);
   const [targetQuota, setTargetQuota] = useState<UserServiceQuota | null>(null);
+  const [targetQuotas, setTargetQuotas] = useState<UserServiceQuota[]>([]);
   const [quotaInput, setQuotaInput] = useState("");
   const [isLookingUp, setIsLookingUp] = useState(false);
   const [isSavingQuota, setIsSavingQuota] = useState(false);
@@ -65,11 +66,12 @@ export function MyServicesPage() {
         : { user_id: lookupValue.trim() };
       const found = await apiClient.lookupUserForQuota(token, search);
       const quotas = await apiClient.getUserServicesForAdmin(token, found.id);
-      const llmQuota = quotas.find((item) => item.service_code === "mock-llm-v1");
-      if (!llmQuota) throw new Error("该用户当前没有 LLM 服务额度记录。");
+      const defaultQuota = quotas.find((item) => item.service_code === "mock-llm-v1") ?? quotas[0];
+      if (!defaultQuota) throw new Error("该用户当前没有可管理的服务额度。");
       setTargetUser(found);
-      setTargetQuota(llmQuota);
-      setQuotaInput(String(llmQuota.monthly_token_limit));
+      setTargetQuotas(quotas);
+      setTargetQuota(defaultQuota);
+      setQuotaInput(String(defaultQuota.monthly_token_limit));
     } catch (reason) {
       setAdminError(reason instanceof Error ? reason.message : "用户查找失败，请重试。");
     } finally {
@@ -78,7 +80,7 @@ export function MyServicesPage() {
   }
 
   async function saveTargetQuota() {
-    if (!token || !targetUser || isSavingQuota) return;
+    if (!token || !targetUser || !targetQuota || isSavingQuota) return;
     const monthlyTokenLimit = Number(quotaInput);
     if (!Number.isSafeInteger(monthlyTokenLimit) || monthlyTokenLimit < 0) {
       setAdminError("请输入大于或等于 0 的整数月额度。");
@@ -91,12 +93,12 @@ export function MyServicesPage() {
       const updated = await apiClient.setUserServiceQuota(
         token,
         targetUser.id,
-        "mock-llm-v1",
+        targetQuota.service_code,
         monthlyTokenLimit,
       );
       setTargetQuota(updated);
       setQuotaInput(String(updated.monthly_token_limit));
-      setAdminSuccess(`已更新 ${targetUser.username} 的 LLM 月额度。`);
+      setAdminSuccess(`已更新 ${targetUser.username} 的${targetQuota.name}月额度。`);
       if (targetUser.id === user?.id) {
         try {
           setServices(await apiClient.getMyServices(token));
@@ -170,6 +172,7 @@ export function MyServicesPage() {
       ) : (
         <div className="service-quota-list">
           {services.map((service) => {
+            const unitLabel = service.quota_unit === "seconds" ? "秒" : "tokens";
             const used = service.tokens_used + service.tokens_reserved;
             const usagePercent = service.monthly_token_limit > 0
               ? Math.min(100, (used / service.monthly_token_limit) * 100)
@@ -189,31 +192,31 @@ export function MyServicesPage() {
                     </div>
                     <p>{service.service_code} · {service.service_code === "mock-llm-v1" ? "内置 mock-chat；其他模型名请按供应商文档填写，网关会原样转发" : `模型：${service.models.join("、") || "暂无"}`}</p>
                   </div>
-                  <Link className="secondary-button" to={`/services/${service.service_code === "project-context-v1" ? "context" : "llm"}/projects`}>管理项目</Link>
+                  <Link className="secondary-button" to={`/services/${service.service_code === "project-context-v1" ? "context" : service.service_code === "asr-v1" ? "asr" : "llm"}/projects`}>管理项目</Link>
                 </div>
 
                 <div className="service-quota-metrics">
                   <div>
                     <span>每月总额度</span>
-                    <strong>{formatTokens(service.monthly_token_limit)} <small>tokens</small></strong>
+                    <strong>{formatTokens(service.monthly_token_limit)} <small>{unitLabel}</small></strong>
                   </div>
                   <div>
                     <span>已分配到项目</span>
-                    <strong>{formatTokens(service.allocated_tokens)} <small>tokens</small></strong>
+                    <strong>{formatTokens(service.allocated_tokens)} <small>{unitLabel}</small></strong>
                   </div>
                   <div>
                     <span>剩余可分配</span>
-                    <strong>{formatTokens(service.available_tokens)} <small>tokens</small></strong>
+                    <strong>{formatTokens(service.available_tokens)} <small>{unitLabel}</small></strong>
                   </div>
                   <div>
                     <span>本月已用 / 处理中预留</span>
-                    <strong>{formatTokens(service.tokens_used)} / {formatTokens(service.tokens_reserved)} <small>tokens</small></strong>
+                    <strong>{formatTokens(service.tokens_used)} / {formatTokens(service.tokens_reserved)} <small>{unitLabel}</small></strong>
                   </div>
                 </div>
 
                 {service.monthly_token_limit === 0 && (service.allocated_tokens > 0 || used > 0) ? (
                   <p className="service-quota-warning" role="alert">
-                    此服务额度已设为 0，LLM 调用已暂停。项目额度分配记录仍保留；如需恢复，请联系管理员。
+                    此服务额度已设为 0，服务调用已暂停。项目额度分配记录仍保留；如需恢复，请联系管理员。
                   </p>
                 ) : service.monthly_token_limit > 0 && service.allocated_tokens > service.monthly_token_limit ? (
                   <p className="service-quota-warning" role="alert">
@@ -225,7 +228,7 @@ export function MyServicesPage() {
                   </p>
                 ) : null}
 
-                <div className="service-usage-track" role="img" aria-label={`已使用与处理中预留共 ${formatTokens(used)}，月额度 ${formatTokens(service.monthly_token_limit)} tokens`}>
+                <div className="service-usage-track" role="img" aria-label={`已使用与处理中预留共 ${formatTokens(used)} ${unitLabel}，月额度 ${formatTokens(service.monthly_token_limit)} ${unitLabel}`}>
                   <span style={{ width: `${usagePercent}%` }} />
                 </div>
                 <p className="service-quota-note">
@@ -233,7 +236,7 @@ export function MyServicesPage() {
                     ? "额度按 UTC 自然月统计。项目调用额度从个人总额度中分配；项目消耗会同时计入这里。"
                     : isPaused
                       ? "额度为 0 时，既有项目服务分配仍保留，但不能通过个人总额度校验。"
-                      : "当前尚未获得 LLM 调用额度。如需使用，请联系管理员调整你的月度上限。"}
+                      : `当前尚未获得${service.name}额度。如需使用，请联系管理员调整你的月度上限。`}
                 </p>
               </article>
             );
@@ -245,8 +248,8 @@ export function MyServicesPage() {
         <section className="project-detail-panel admin-quota-panel" aria-labelledby="admin-quota-title">
           <div>
             <p className="page-kicker">管理员</p>
-            <h3 id="admin-quota-title">用户 LLM 额度管理</h3>
-            <p className="admin-quota-description">按唯一用户名或用户 ID 查找用户，查看当前额度后修改其每月总上限。</p>
+            <h3 id="admin-quota-title">用户服务额度管理</h3>
+            <p className="admin-quota-description">按唯一用户名或用户 ID 查找用户，选择服务后查看并修改其每月总额度。</p>
           </div>
           <form
             className="admin-quota-lookup"
@@ -291,10 +294,17 @@ export function MyServicesPage() {
                 </div>
                 <code>{targetUser.id}</code>
               </div>
+              <label className="project-field"><span>管理服务</span><select onChange={(event) => {
+                const selected = targetQuotas.find((item) => item.service_code === event.target.value);
+                if (selected) {
+                  setTargetQuota(selected);
+                  setQuotaInput(String(selected.monthly_token_limit));
+                }
+              }} value={targetQuota.service_code}>{targetQuotas.map((quota) => <option key={quota.service_code} value={quota.service_code}>{quota.name}（{quota.quota_unit === "seconds" ? "秒" : "tokens"}）</option>)}</select></label>
               <div className="admin-quota-summary">
-                <span>当前上限：<strong>{new Intl.NumberFormat("zh-CN").format(targetQuota.monthly_token_limit)}</strong></span>
-                <span>项目已分配：<strong>{new Intl.NumberFormat("zh-CN").format(targetQuota.allocated_tokens)}</strong></span>
-                <span>本月已用：<strong>{new Intl.NumberFormat("zh-CN").format(targetQuota.tokens_used)}</strong></span>
+                <span>当前上限：<strong>{new Intl.NumberFormat("zh-CN").format(targetQuota.monthly_token_limit)} {targetQuota.quota_unit === "seconds" ? "秒" : "tokens"}</strong></span>
+                <span>项目已分配：<strong>{new Intl.NumberFormat("zh-CN").format(targetQuota.allocated_tokens)} {targetQuota.quota_unit === "seconds" ? "秒" : "tokens"}</strong></span>
+                <span>本月已用：<strong>{new Intl.NumberFormat("zh-CN").format(targetQuota.tokens_used)} {targetQuota.quota_unit === "seconds" ? "秒" : "tokens"}</strong></span>
               </div>
               {targetQuota.monthly_token_limit === 0 && (targetQuota.allocated_tokens > 0 || targetQuota.tokens_used + targetQuota.tokens_reserved > 0) ? (
                 <p className="service-quota-warning" role="status">额度为 0 会暂停此用户所有项目的 LLM 调用，现有项目分配记录会保留。</p>
@@ -305,7 +315,7 @@ export function MyServicesPage() {
               ) : null}
               <div className="admin-quota-edit">
                 <label>
-                  <span>新的 LLM 月额度（tokens）</span>
+                  <span>新的 {targetQuota.name} 月额度（{targetQuota.quota_unit === "seconds" ? "秒" : "tokens"}）</span>
                   <input
                     disabled={isSavingQuota}
                     min={0}

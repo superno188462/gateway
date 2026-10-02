@@ -19,6 +19,9 @@ from app.domain.health import ReadinessProbe
 from app.resources.api import router as project_resources_router
 from app.service_management.api import account_router as account_services_router
 from app.service_management.api import router as llm_services_router
+from app.services.asr.admin_api import router as asr_provider_admin_router
+from app.services.asr.api import router as asr_gateway_router
+from app.services.asr.stream_api import router as asr_stream_router
 from app.services.llm.admin_api import public_router as llm_models_router
 from app.services.llm.admin_api import router as llm_provider_admin_router
 from app.services.llm.api import router as llm_gateway_router
@@ -113,6 +116,9 @@ def create_app(
     app.include_router(llm_services_router)
     app.include_router(account_services_router)
     app.include_router(llm_gateway_router)
+    app.include_router(asr_gateway_router)
+    app.include_router(asr_stream_router)
+    app.include_router(asr_provider_admin_router)
     app.include_router(project_context_router)
     app.include_router(project_context_console_router)
     app.include_router(llm_models_router)

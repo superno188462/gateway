@@ -275,7 +275,7 @@ export function ProjectContextPage() {
         <p className={serviceEnabled ? "form-success" : "service-quota-warning"} role="status">
           {serviceEnabled ? "项目上下文服务已开通，运行时 API Key 可以访问。" : "项目上下文服务尚未开通；请项目 owner 在项目详情中申请。"}
         </p>
-        <p>此服务需要项目 owner 在项目详情页申请开通。它不消耗 LLM、Embedding、TTS 或 ASR 的 token 额度。每个请求通过项目 API Key 自动确定项目，所有模板和记忆都按项目隔离；用户 ID、会话 ID 由你的应用传入。</p>
+        <p>此服务需要项目 owner 在项目详情页申请开通。它不消耗 LLM、Embedding、TTS 或 ASR 额度。每个请求通过项目 API Key 自动确定项目，所有模板和记忆都按项目隔离；用户 ID、会话 ID 由你的应用传入。</p>
         <div className="project-detail-shortcuts"><Link className="secondary-button" to={`/projects/${projectId}/keys`}>查看项目 API Key →</Link>
           <code>{baseUrl}</code></div>
       </section>

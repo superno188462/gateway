@@ -90,6 +90,28 @@ Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/v1/chat/completions -H
 
 将 `stream` 设为 `true` 可返回 SSE；成功响应包含 token 用量，额度耗尽返回 429，未申请服务返回 403。Mock tokenizer 仅用于开发演示，不代表真实模型 tokenizer。网关日志记录项目、Key、模型、token、状态和请求 ID，不保存消息或回复正文。
 
+## ASR 语音识别服务
+
+ASR 是独立服务，使用单独的 `asr-v1` 配额，按识别音频时长的秒数预留并结算，不占用 LLM token 额度。新用户默认 ASR 月额度为 0，可通过 `DEFAULT_ASR_MONTHLY_QUOTA_SECONDS` 设置默认秒数；管理员也能在“我的服务”页单独为用户授权 ASR 秒数。管理员在“ASR API”页面配置火山豆包 ASR 上游，并设置 `LLM_PROVIDER_SECRET_KEY` 以加密供应商密钥；用户再为项目申请 ASR 服务、分配秒数额度。接口使用 OpenAI Audio Transcriptions 的 multipart 形式，客户端只需将 OpenAI SDK 的 `base_url` 指向网关并使用项目 API Key：
+
+```python
+from openai import OpenAI
+
+client = OpenAI(
+    api_key="项目 API Key",
+    base_url="http://127.0.0.1:8000/v1",
+)
+with open("speech.wav", "rb") as audio:
+    result = client.audio.transcriptions.create(
+        model="doubao-seed-asr-2.0",
+        file=audio,
+        response_format="json",
+    )
+print(result.text)
+```
+
+当前还提供实时 WebSocket 接口 `ws://127.0.0.1:8000/v1/audio/stream`，调用方使用项目 API Key 鉴权，在 `start` 消息中传入管理员配置的公开模型名，之后发送 16 kHz、单声道、16-bit little-endian 裸 PCM 二进制帧并以 `{"type":"end"}` 结束。网关负责火山协议适配、实时事件转发、项目秒额度和请求日志。HTTP 文件转写接口继续使用 OpenAI Audio Transcriptions multipart 形式，可上传带有效时长的 WAV、MP3、OGG 和 M4A；压缩音频依赖 ffmpeg，Docker 后端镜像会安装。实时协议和最小调用示例见 [实时 ASR WebSocket 文档](docs/asr_websocket.md)。项目额度按整秒计量，不足 1 秒按 1 秒扣费；用户总额度与项目额度分别校验。
+
 ## 验证
 
 ```powershell
