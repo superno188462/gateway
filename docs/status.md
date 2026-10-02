@@ -8,18 +8,20 @@
 | B0 | FastAPI、配置、PostgreSQL、Alembic、健康检查、质量工具 | 启动、迁移、测试和检查 | 已完成 |
 | F0 | React 基础、路由、布局、类型安全 API Client | 能访问健康检查 | 已完成 |
 | A1 | 统一登录、角色、JWT | 四种启动分支和登录流程 | 已完成 |
-| A2 | 项目管理 | CRUD、项目成员权限、标签检索和分页 | 功能已完成；隔离 PostgreSQL 集成验收待执行 |
+| A2 | 项目管理 | CRUD、项目成员权限、标签检索和分页 | 已完成；用户自测通过 |
 | A3 | API Key | owner/editor 按成员创建自有 Key，私有可见，移除/降权自动撤销，日志可追溯 | 已完成 |
-| A4 | LLM 网关与 OpenAI 兼容上游 | 用户级额度、项目分配、项目 Key 调用、同名直通与优先级故障切换 | 功能已完成；真实供应商经网关端到端验证待执行 |
+| A4 | LLM 网关与 OpenAI 兼容上游 | 用户级额度、项目分配、项目 Key 调用、同名直通与优先级故障切换 | 已完成；真实供应商经网关端到端验证通过（用户自测） |
 | A5 | 日志与用量 | 通用请求日志、服务专属计量、数据库页码分页、汇总一致、日志保留 | 已完成 |
 | A6 | 模板与记忆 | 固定目录、文件 CRUD、并发冲突 | 已完成 |
-| A7 | 公网部署 | 容器构建、TLS、限流、备份、回滚和安全验收 | 部署脚本已实现；服务器验收待执行 |
+| A7 | 公网部署 | 容器构建、TLS、限流、备份、回滚和安全验收 | 已完成；服务器部署与安全验收通过（用户自测） |
+| A8 | ASR 服务 | 火山豆包文件转写与实时 WebSocket、独立秒额度、事件去重和日志 | 已完成；功能测试和用户自测通过 |
 
-## 当前阶段
+## 当前状态
 
-- 当前：A7 公网部署；已新增后端镜像、前端静态构建导出任务、生产 Compose、部署脚本和克隆后操作文档。项目不运行 Nginx，计划由服务器现有 Nginx 托管静态文件并反代 API；尚未在目标服务器完成真实部署验证。
-- 本轮不包含：其他 ASR/TTS/Embedding/RAG 服务的实际实现。
-- 运行约定：后端 `uv run python main.py`；前端在 F0 后使用 `npm run dev`；运行时数据库使用服务器 PostgreSQL。Docker 仅用于后续服务器部署。
+- A1–A8 均已完成；A2、A4、A7 的待验收项由用户自测确认通过。A8 ASR 在原阶段计划之外新增，现已纳入正式阶段并完成。
+- A7 部署结构：项目提供后端镜像、前端静态构建导出任务、生产 Compose 和部署脚本；项目本身不运行 Nginx，由服务器现有 Nginx 托管静态文件并反代 API。服务器部署、TLS、限流、备份恢复与安全检查均由用户自测确认通过。
+- 后续可单独规划 Embedding、TTS 等服务，不属于 A1–A8 未完成事项。
+- 运行约定：后端 `uv run python main.py`；前端使用 `npm run dev`；运行时数据库使用服务器 PostgreSQL。Docker 用于服务器部署。
 - DI 约定：`AppContainer` 注册配置、数据库引擎和基础设施服务单例；路由通过 FastAPI `Depends` 获取，不自行创建服务。
 
 ## P0 交付
@@ -157,7 +159,7 @@
 - PostgreSQL 集成验证确认同一组可保存多个 API Key、用户目录只显示一次供应商名称，且每条 API 可独立连通测试；对应集成测试 2 passed。测试库已升级至 `20260929_0016 (head)`。
 - 后端 `uv run pytest tests -q`：23 项通过、4 项因未配置 `TEST_DATABASE_URL` 跳过；ruff、mypy 和 OpenAPI 契约测试通过。
 - 前端 `npm run typecheck`、`npm run lint`、`npm run build`：全部通过。
-- HTTP 集成测试使用真实 PostgreSQL 和模拟上游验证管理员权限、供应商 CRUD、密钥不泄露、最小聊天连通性请求和公开模型列表。真实方舟直连已由用户使用 curl 验证；网关经真实上游的完整调用仍待验证。
+- HTTP 集成测试使用真实 PostgreSQL 和模拟上游验证管理员权限、供应商 CRUD、密钥不泄露、最小聊天连通性请求和公开模型列表。真实方舟直连及网关经真实上游的完整调用均已由用户自测通过。
 - 普通登录用户可通过 `GET /api/v1/llm/provider-catalog` 查看当前启用的默认池和路由前缀组、管理员配置的供应商显示名称及连接数；“我的服务”页展示这些供应商名称、路由前缀和 `前缀/模型名` 调用格式。目录不泄露 Base URL、优先级或 Key。
 - 针对该目录新增 HTTP 集成测试，验证未登录拒绝、普通用户读取成功、管理员也可读取及返回体不含上游敏感字段；`uv run pytest tests/integration/test_llm_provider_admin_api.py -m integration -q`：1 passed。
 - 更新后验证：`uv run pytest tests -q`：28 passed、4 skipped（缺少 `TEST_DATABASE_URL`）；ruff、格式检查、mypy、OpenAPI 契约测试通过；前端 typecheck、lint、build 通过。
@@ -220,12 +222,20 @@
 - 提示词模板通过登录态资源 API 创建/编辑/删除，运行时 API 支持按模板 ID 或分类/名称读取。Swagger UI 的模板、messages、长期记忆和画像请求模型提供完整 JSON 示例；短期新消息 API 为多条 OpenAI 风格 role/content 消息，旧 key/value 路由兼容。
 - 验证：PostgreSQL `mydb` 已升级至 `20260930_0029 (head)`；`uv run pytest -m 'not integration' -q` 为 36 passed、12 deselected；上下文和资源集成测试 2 passed；`uv run ruff check app tests migrations/versions/20260930_0029_session_messages.py`、`uv run mypy app`、OpenAPI 合同测试、前端 `npm run build` 和 `npm run lint` 均通过。
 
-## A7 Docker 部署准备
+## A7 Docker 部署与生产验收
 
 - 新增 `backend/Dockerfile`、用于构建并导出前端静态文件的 `frontend/Dockerfile`、统一 `compose.yaml` 和部署脚本；镜像构建使用锁定的 Python/Node 依赖。Nginx 由服务器部署环境管理，项目不启动 Nginx 容器。
 - `deploy/deploy.sh` 负责构建后端镜像、导出前端静态文件、升级 Alembic 数据库并启动后端容器。
 - 新增 `docker.md`，记录 Git 克隆后配置密钥、数据库、启动、健康检查、更新和备份步骤。
 - Redis 未加入部署：当前网关没有 Redis 客户端依赖或使用场景，不启动未使用的基础设施。
-- 待验证：Docker Compose 配置解析、后端镜像/前端静态文件实际构建和目标服务器启动；公网 Nginx 集成、TLS、限流、备份恢复及安全验收仍未完成。
+- 验收：用户已确认 Docker Compose、镜像构建、目标服务器启动、公网 Nginx 集成、TLS、限流、备份恢复和安全检查均通过。
 
-下一步是在目标服务器按 `docker.md` 完成一次部署演练，再补齐 HTTPS、限流和备份恢复验收。
+## A8 ASR 服务与实时流式识别
+
+- 新增独立 `asr-v1` 服务，用户级与项目级额度按音频秒数管理，与 LLM token 额度分开预留和结算。
+- 管理员可配置火山豆包 ASR 上游、Resource ID、文件转写 URL、实时流 URL 和 API Key；密钥在服务端加密保存。业务调用方通过项目 API Key、公开模型名调用网关，不需要接触火山密钥或私有协议。
+- 文件转写提供 OpenAI Audio Transcriptions 兼容接口；实时接口 `/v1/audio/stream` 接受 JSON 控制消息与 16 kHz mono s16le PCM 帧，网关负责火山 WebSocket V3 协议适配。
+- 实时事件带 `utterance_id` 和可用的语句时间戳。网关按上游语句时间位置生成稳定 ID，抑制重复 final；累计 utterance 快照不会重新发送已确认的句子；相同文本在后续时间再次出现时使用新 ID。partial 只用于展示，不触发 Agent 轮次。
+- 语句 final 与会话结束分离：静音判停后可在同一 WebSocket 连接上继续收发；只有调用方发送 `end` 且上游会话完成后才结算并发送 `session.completed`。
+- 文档与示例：`docs/asr_websocket.md`、`docs/asr_websocket_client.py`。
+- 验证：ASR 定向测试 29 项通过，Ruff 和 mypy 通过；用户确认端到端自测通过。

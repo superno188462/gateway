@@ -50,6 +50,7 @@ B0 不创建业务实体。数据库只产生 Alembic 自己的 `alembic_version
 | A4 | `user_service_quotas`、`project_service_subscriptions`、`service_usage_buckets`、通用 `gateway_requests`；LLM 专属用量单独写入 `llm_request_usages` |
 | A5 | 通用请求日志查询、审计阶段和日志保留任务状态；模型与 Token 等服务专属信息不得成为通用日志列 |
 | A6 | `resources`、`project_session_messages`、`project_session_memories`、`project_long_term_memories`、`project_user_profiles` 及乐观并发版本 |
+| A8 | `asr_provider_configs`；复用服务额度、项目订阅和通用请求日志，ASR 按音频秒数单独计量 |
 
 ### A6 资源模块
 
@@ -88,7 +89,7 @@ app/
 │   ├── llm/                 # LLM API、网关用例、领域契约、Provider
 │   ├── project_context/     # 项目模板、短期/长期记忆、用户画像 API
 │   │   └── providers/mock.py
-│   ├── asr/                 # 后续新增，与 llm 平级
+│   ├── asr/                 # A8 ASR HTTP、WebSocket、额度生命周期和火山 Provider
 │   ├── tts/                 # 后续新增，与 llm 平级
 │   └── embedding/            # 后续新增，与 llm 平级
 ├── service_management/       # 跨服务目录、申请、额度与用量管理
@@ -102,10 +103,14 @@ app/
 - `services/llm/providers/openai_compatible.py` 按优先级依次调用启用连接，在网络错误、400/401/403/404/408/409/422/429 或 5xx 时尝试其他连接；第三方 URL 必须为 HTTPS，本机 HTTP 仅供开发调试。
 - 管理员可以请求兼容的 `/models` 测试上游连通性，数据库仅保存测试时间、成功状态及安全摘要，不保存供应商原始响应。
 - 登录用户通过 `GET /api/v1/llm/provider-catalog` 查看启用的默认池和路由前缀组、去重的供应商显示名及连接数量；公开目录不含连接名、上游 URL、密钥或优先级。
+
+### A8 ASR 模块
+
+`services/asr/` 提供 OpenAI 风格文件转写和统一实时 WebSocket 接口。管理员上游密钥加密保存于 `asr_provider_configs`；文件转写与实时流各自适配火山协议。网关使用通用项目 API Key、额度及请求审计能力，ASR 用音频秒数独立预留与结算。实时 Provider 将火山帧转换为统一事件，按上游 utterance 时间戳生成稳定 ID 并去重 final；音频和识别正文不写入请求日志。
 - `services/llm/application.py` 校验服务开通、预留月额度、调用 Provider、结算用量和记录请求；`services/llm/api.py` 提供 OpenAI 风格聊天 API。
 - 网关保留并透传 Chat Completions 标准字段及未声明的 JSON 扩展字段；只重写公开 `model` 到供应商模型名，并替换鉴权。供应商拒绝参数时返回可诊断的安全错误；响应保留供应商兼容字段，但请求正文不入库。
 - `service_management/application.py` 通过容器注入的服务目录管理项目申请、额度和用量；`service_management/api.py` 暴露现有服务目录、订阅、申请和额度 API。
-- 服务目录中的 AI 推理服务（LLM、Embedding、RAG、TTS、ASR）受服务专属额度计量；当前只有 LLM 使用 token 额度，后续服务须明确各自单位。项目上下文服务是独立的数据存取服务，通过项目订阅门禁，但不扣 AI 推理额度；容量和频率限制由该服务自己的配置处理。
+- 服务目录中的 AI 推理服务（LLM、Embedding、RAG、TTS、ASR）受服务专属额度计量；LLM 使用 token，A8 ASR 使用音频秒数，后续服务须明确各自单位。项目上下文服务是独立的数据存取服务，通过项目订阅门禁，但不扣 AI 推理额度；容量和频率限制由该服务自己的配置处理。
 - `services/project_context` 通过目录码 `project-context-v1` 注册为独立数据服务。`ProjectContextService` 以项目 API Key 解析的 project_id 为根边界，先检查项目订阅，再按用户和会话键访问记录。其运行时路由通过 `GatewayRequestRecorder` 记录服务结果元数据，不把数据正文传给记录器。
 - 现有 HTTP 路径和服务目录行为保持兼容。添加新服务时，在 `services/<name>/` 实现模块，并在组合根注册对应目录项；服务管理代码不依赖某个具体 Provider。
 - 调用方使用 `Authorization: Bearer <项目 API Key>`。API Key 服务解析项目 ID，客户端不传项目 ID；认证后的项目必须已有对应服务订阅。

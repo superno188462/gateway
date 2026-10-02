@@ -148,7 +148,7 @@ uv run --env-file ../.env pytest -m integration
 - [Docker 部署](docker.md)：克隆代码后的服务器配置、镜像构建、数据库迁移和启动。
 - [实施步骤目录](docs/steps/README.md)：分阶段开发顺序、运行命令和 Codex 执行手册。
 
-后续前端初始化完成后，本地开发统一使用 `npm run dev`，不使用 Docker 启动前后端。
+本地前端开发使用 `npm run dev`；本机前后端开发不依赖 Docker。
 
 ## Git 仓库
 
