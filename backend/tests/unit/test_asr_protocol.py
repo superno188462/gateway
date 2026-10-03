@@ -59,6 +59,15 @@ def test_encode_plan_audio_uses_negative_sequence_for_final_audio_chunk() -> Non
     assert gzip.decompress(frame[12 : 12 + size]) == b"last-audio"
 
 
+def test_encode_plan_empty_final_audio_uses_uncompressed_empty_payload() -> None:
+    frame = encode_audio(b"", final=True, sequence=8, compress=True)
+
+    assert frame[:4] == bytes((0x11, 0x23, 0x00, 0x00))
+    assert struct.unpack_from(">i", frame, 4)[0] == -8
+    assert struct.unpack_from(">I", frame, 8)[0] == 0
+    assert frame[12:] == b""
+
+
 def test_encode_plan_audio_can_send_raw_pcm_without_compression() -> None:
     frame = encode_audio(b"pcm-data", final=False, sequence=2, compress=False)
 

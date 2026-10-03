@@ -45,12 +45,16 @@ def encode_audio(
     compress: bool = True,
 ) -> bytes:
     """编码音频请求；Plan 模式按序号递增，末包序号使用负数。"""
-    compressed = gzip.compress(audio) if compress and audio else audio
+    # Keep the compression flag consistent with the payload. An empty final
+    # frame has no gzip member to decode, so send it as an uncompressed empty
+    # payload even when normal audio frames use gzip.
+    use_compression = compress and bool(audio)
+    compressed = gzip.compress(audio) if use_compression else audio
     if sequence is None:
         flags = 0b0010 if final else 0
     else:
         flags = 0b0011 if final else 0b0001
-    compression = 0x01 if compress else 0x00
+    compression = 0x01 if use_compression else 0x00
     header = bytes((0x11, (0x02 << 4) | flags, compression, 0x00))
     if sequence is not None:
         frame_sequence = -sequence if final else sequence
