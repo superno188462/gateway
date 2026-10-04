@@ -9,6 +9,12 @@ function explain(reason: unknown): string {
   return reason instanceof Error ? reason.message : "读取技术日志失败。";
 }
 
+function formatBeijingTime(value: string): string {
+  const normalized = value.includes("T") ? value : value.replace(" ", "T");
+  const timestamp = /(?:Z|[+-]\d{2}:?\d{2})$/.test(normalized) ? normalized : `${normalized}+08:00`;
+  return new Date(timestamp).toLocaleString("zh-CN", { timeZone: "Asia/Shanghai" });
+}
+
 export function SystemLogsPage() {
   const { token } = useAuth();
   const [searchParams] = useSearchParams();
@@ -100,8 +106,8 @@ export function SystemLogsPage() {
         {entries.length === 0 ? <div className="empty-state">{loading ? "正在读取日志…" : "当前日志文件没有匹配记录。"}</div> : (
           <div className="request-log-table-wrap">
             <table className="request-log-table system-log-table">
-              <thead><tr><th>时间</th><th>等级</th><th>来源</th><th>Trace ID</th><th>事件</th></tr></thead>
-              <tbody>{entries.map((entry, index) => <tr className={`system-log-row system-log-${entry.level.toLowerCase()}`} key={`${entry.timestamp}-${entry.trace_id}-${index}`}><td>{entry.timestamp}</td><td><span className={`log-level log-level-${entry.level.toLowerCase()}`}>{entry.level}</span></td><td><code>{entry.source}</code></td><td><code>{entry.trace_id}</code></td><td className="system-log-message">{entry.message}</td></tr>)}</tbody>
+              <thead><tr><th>时间（北京时间）</th><th>等级</th><th>来源</th><th>Trace ID</th><th>事件</th></tr></thead>
+              <tbody>{entries.map((entry, index) => <tr className={`system-log-row system-log-${entry.level.toLowerCase()}`} key={`${entry.timestamp}-${entry.trace_id}-${index}`}><td>{formatBeijingTime(entry.timestamp)}</td><td><span className={`log-level log-level-${entry.level.toLowerCase()}`}>{entry.level}</span></td><td><code>{entry.source}</code></td><td><code>{entry.trace_id}</code></td><td className="system-log-message">{entry.message}</td></tr>)}</tbody>
             </table>
           </div>
         )}
