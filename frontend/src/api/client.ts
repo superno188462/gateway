@@ -132,7 +132,7 @@ export type ContextSessionMessage = {
   role: "system" | "user" | "assistant" | "tool";
   content: string;
   metadata: Record<string, unknown>;
-  expires_at: string;
+  expires_at: string | null;
 };
 
 export type ContextSessionMessages = {

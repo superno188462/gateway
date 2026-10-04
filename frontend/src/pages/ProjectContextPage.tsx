@@ -21,7 +21,7 @@ export function ProjectContextPage() {
   const [sessionId, setSessionId] = useState("");
   const [profileText, setProfileText] = useState("{}");
   const [profileVersion, setProfileVersion] = useState<number | null>(null);
-  const [shortMemories, setShortMemories] = useState<Array<{ key: string; value: unknown; version: number; expires_at: string }>>([]);
+  const [shortMemories, setShortMemories] = useState<Array<{ key: string; value: unknown; version: number; expires_at: string | null }>>([]);
   const [memoryKey, setMemoryKey] = useState("");
   const [memoryValue, setMemoryValue] = useState("{}");
   const [longMemories, setLongMemories] = useState<Array<{ id: string; content: string; tags: string[]; metadata: Record<string, unknown>; version: number }>>([]);
@@ -205,10 +205,10 @@ export function ProjectContextPage() {
       const value = JSON.parse(memoryValue) as unknown;
       await contextRequest(
         `/users/${encodeURIComponent(externalUserId.trim())}/sessions/${encodeURIComponent(sessionId.trim())}/memories/${encodeURIComponent(memoryKey.trim())}`,
-        { method: "PUT", body: JSON.stringify({ value, ttl_seconds: 86400 }) },
+        { method: "PUT", body: JSON.stringify({ value }) },
       );
       setMemoryKey("");
-      setSuccess("短期记忆已保存，有效期 24 小时。");
+      setSuccess("短期记忆已保存；网关会保留数据，直到通过接口显式删除。");
       await loadUserContext();
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "记忆 JSON 无效或保存失败。");
@@ -306,7 +306,7 @@ export function ProjectContextPage() {
 
       <section className="project-detail-panel" aria-labelledby="context-api-title">
         <h3 id="context-api-title">记忆与画像 API</h3>
-        <p>短期记忆支持按 key 原子覆盖和 TTL；长期记忆支持分页、标签和版本更新；用户画像使用 JSON 整体替换并校验版本。所有这些请求同样通过项目 API Key 授权。</p>
+        <p>短期记忆支持按 key 原子覆盖，网关不会自动删除；长期记忆支持分页、标签和版本更新；用户画像使用 JSON 整体替换并校验版本。所有这些请求同样通过项目 API Key 授权。</p>
         <div className="context-api-list">
           <code>GET {appBasePath}/v1/context/templates</code>
           <code>GET {appBasePath}/v1/context/users/&#123;external_user_id&#125;/sessions/&#123;session_id&#125;/memories</code>

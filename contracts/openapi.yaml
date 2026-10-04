@@ -1649,7 +1649,7 @@ paths:
       tags:
       - Project Context Gateway
       summary: 读取会话短期消息
-      description: 返回该项目用户会话最近的有效消息，按追加顺序排列；项目由 API Key 确定。
+      description: 返回该项目用户会话最近的消息，按追加顺序排列；数据保留到显式删除，项目由 API Key 确定。
       operationId: list_session_messages_v1_context_users__external_user_id__sessions__session_id__messages_get
       security:
       - HTTPBearer: []
@@ -1692,7 +1692,7 @@ paths:
       tags:
       - Project Context Gateway
       summary: 向会话追加短期消息
-      description: 按请求数组顺序追加 1 到 100 条消息；过期时间按本次请求统一设置。
+      description: 按请求数组顺序追加 1 到 100 条消息；网关不会自动删除，需调用 DELETE 接口清除。
       operationId: append_session_messages_v1_context_users__external_user_id__sessions__session_id__messages_post
       security:
       - HTTPBearer: []
@@ -4903,14 +4903,6 @@ components:
           examples:
           - language: zh-CN
             step: collecting_preferences
-        ttl_seconds:
-          type: integer
-          maximum: 2592000.0
-          minimum: 60.0
-          title: Ttl Seconds
-          default: 86400
-          examples:
-          - 86400
       type: object
       required:
       - value
@@ -4986,17 +4978,18 @@ components:
           title: Sequence
           description: 数据库生成的全局递增顺序值；同一会话按此字段排序。
         expires_at:
-          type: string
-          format: date-time
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
           title: Expires At
-          description: 此消息的过期时间（UTC）。
+          description: 保留字段；当前数据不会自动过期，显式删除前为 null。
       type: object
       required:
       - role
       - content
       - id
       - sequence
-      - expires_at
       title: SessionMessageResponse
     SessionMessagesResponse:
       properties:
@@ -5041,15 +5034,6 @@ components:
               role: user
             - content: 好的，我会尽量简洁地用中文回答。
               role: assistant
-        ttl_seconds:
-          type: integer
-          maximum: 2592000.0
-          minimum: 60.0
-          title: Ttl Seconds
-          description: 本次追加消息的存活时间，范围 60 秒到 30 天。
-          default: 86400
-          examples:
-          - 86400
       type: object
       required:
       - messages
@@ -5060,7 +5044,6 @@ components:
           role: user
         - content: 好的，我会尽量简洁地用中文回答。
           role: assistant
-        ttl_seconds: 86400
     SetUserServiceQuotaRequest:
       properties:
         monthly_token_limit:

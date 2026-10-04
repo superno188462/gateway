@@ -6,7 +6,7 @@ import { useAuth } from "../auth/useAuth";
 const PAGE_SIZE = 20;
 const contextSections = [
   { path: "templates", label: "提示词模板", description: "维护命名提示词文本" },
-  { path: "short", label: "短期记忆", description: "查看会话消息及过期时间" },
+  { path: "short", label: "短期记忆", description: "查看会话消息和顺序" },
   { path: "long", label: "长期记忆", description: "管理跨会话的记忆条目" },
   { path: "profile", label: "用户画像", description: "查看项目定义的 JSON 画像" },
 ];

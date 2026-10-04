@@ -66,7 +66,6 @@ class AppContainer:
     request_recorder: GatewayRequestRecorder | None
     technical_log_service: TechnicalLogService
     log_retention_task: asyncio.Task[None] | None
-    context_cleanup_task: asyncio.Task[None] | None
     http_client: httpx.AsyncClient | None
 
     @classmethod
@@ -102,7 +101,6 @@ class AppContainer:
                 request_recorder=None,
                 technical_log_service=TechnicalLogService(settings.log_file_path),
                 log_retention_task=None,
-                context_cleanup_task=None,
                 http_client=None,
             )
 
@@ -226,11 +224,6 @@ class AppContainer:
                 self.request_log_service.run_periodically(),
                 name="gateway-request-log-retention",
             )
-        if self.project_context_service is not None:
-            self.context_cleanup_task = asyncio.create_task(
-                self.project_context_service.run_cleanup_periodically(),
-                name="gateway-context-memory-cleanup",
-            )
 
     async def close(self) -> None:
         """释放容器拥有的异步资源。"""
@@ -241,13 +234,6 @@ class AppContainer:
             except asyncio.CancelledError:
                 pass
             self.log_retention_task = None
-        if self.context_cleanup_task is not None:
-            self.context_cleanup_task.cancel()
-            try:
-                await self.context_cleanup_task
-            except asyncio.CancelledError:
-                pass
-            self.context_cleanup_task = None
         if self.database_engine is not None:
             await self.database_engine.dispose()
         if self.http_client is not None:

@@ -1,9 +1,7 @@
 """项目上下文服务：模板读取、短期/长期记忆和用户画像。"""
 
-import asyncio
 import json
-import logging
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
 from sqlalchemy import delete, func, or_, select
@@ -23,10 +21,7 @@ from app.infrastructure.db.models import (
 )
 from app.services.project_context.catalog import PROJECT_CONTEXT_SERVICE
 
-DEFAULT_SESSION_TTL_SECONDS = 86_400
-MAX_SESSION_TTL_SECONDS = 2_592_000
 MAX_MEMORY_VALUE_BYTES = 64_000
-logger = logging.getLogger("gateway.context.cleanup")
 
 
 class ContextNotFoundError(RuntimeError):
@@ -108,38 +103,6 @@ class ProjectContextService:
             )
             return list(rows.all()), int(total or 0)
 
-    async def cleanup_expired_session_memories(self) -> int:
-        """物理清除已过期短期记忆，避免 TTL 记录无限累积。"""
-        async with self._session_factory.begin() as session:
-            expired_ids = await session.scalars(
-                delete(ProjectSessionMemory)
-                .where(ProjectSessionMemory.expires_at <= datetime.now(UTC))
-                .returning(ProjectSessionMemory.id)
-            )
-            return len(expired_ids.all())
-
-    async def cleanup_expired_session_messages(self) -> int:
-        """物理清除已过期的标准会话消息。"""
-        async with self._session_factory.begin() as session:
-            expired_ids = await session.scalars(
-                delete(ProjectSessionMessage)
-                .where(ProjectSessionMessage.expires_at <= datetime.now(UTC))
-                .returning(ProjectSessionMessage.id)
-            )
-            return len(expired_ids.all())
-
-    async def run_cleanup_periodically(self) -> None:
-        """每小时清除过期会话数据；单轮清理失败时记录错误并继续运行。"""
-        while True:
-            try:
-                deleted_count = await self.cleanup_expired_session_memories()
-                deleted_count += await self.cleanup_expired_session_messages()
-                if deleted_count:
-                    logger.info("expired_context_memories_deleted count=%d", deleted_count)
-            except Exception:
-                logger.exception("expired_context_memory_cleanup_failed")
-            await asyncio.sleep(3600)
-
     async def list_session_messages(
         self,
         project_id: UUID,
@@ -147,7 +110,7 @@ class ProjectContextService:
         session_id: str,
         limit: int,
     ) -> list[ProjectSessionMessage]:
-        """读取会话最近的有效消息，并按会话顺序返回。"""
+        """读取会话最近的消息，并按会话顺序返回。"""
         await self.ensure_enabled(project_id)
         async with self._session_factory() as session:
             newest_first = await session.scalars(
@@ -156,7 +119,6 @@ class ProjectContextService:
                     ProjectSessionMessage.project_id == project_id,
                     ProjectSessionMessage.external_user_id == external_user_id,
                     ProjectSessionMessage.session_id == session_id,
-                    ProjectSessionMessage.expires_at > datetime.now(UTC),
                 )
                 .order_by(ProjectSessionMessage.sequence.desc())
                 .limit(limit)
@@ -169,12 +131,9 @@ class ProjectContextService:
         external_user_id: str,
         session_id: str,
         messages: list[dict[str, object]],
-        ttl_seconds: int,
     ) -> list[ProjectSessionMessage]:
-        """向会话追加一批有序消息；每条消息共享本次写入的 TTL。"""
+        """向会话追加一批有序消息；数据保留到调用方显式删除。"""
         await self.ensure_enabled(project_id)
-        if not 60 <= ttl_seconds <= MAX_SESSION_TTL_SECONDS:
-            raise ValueError("ttl_seconds 必须在 60 秒到 30 天之间")
         if not messages or len(messages) > 100:
             raise ValueError("messages 必须包含 1 到 100 条消息")
         for message in messages:
@@ -188,7 +147,6 @@ class ProjectContextService:
             if not isinstance(metadata, dict):
                 raise ValueError("metadata 必须是 JSON 对象")
             self._validate_json_value(metadata)
-        expires_at = datetime.now(UTC) + timedelta(seconds=ttl_seconds)
         async with self._session_factory.begin() as session:
             rows = [
                 ProjectSessionMessage(
@@ -198,7 +156,7 @@ class ProjectContextService:
                     role=str(message["role"]),
                     content=str(message["content"]),
                     metadata_json=message.get("metadata", {}),
-                    expires_at=expires_at,
+                    expires_at=None,
                 )
                 for message in messages
             ]
@@ -276,7 +234,7 @@ class ProjectContextService:
     async def get_session_memory(
         self, project_id: UUID, external_user_id: str, session_id: str, memory_key: str
     ) -> ProjectSessionMemory:
-        """读取未过期的项目用户会话记忆。"""
+        """读取项目用户会话记忆；只由显式删除操作移除。"""
         await self.ensure_enabled(project_id)
         async with self._session_factory() as session:
             item = await session.scalar(
@@ -285,17 +243,16 @@ class ProjectContextService:
                     ProjectSessionMemory.external_user_id == external_user_id,
                     ProjectSessionMemory.session_id == session_id,
                     ProjectSessionMemory.memory_key == memory_key,
-                    ProjectSessionMemory.expires_at > datetime.now(UTC),
                 )
             )
             if item is None:
-                raise ContextNotFoundError("短期记忆不存在或已过期")
+                raise ContextNotFoundError("短期记忆不存在")
             return item
 
     async def list_session_memories(
         self, project_id: UUID, external_user_id: str, session_id: str
     ) -> list[ProjectSessionMemory]:
-        """列出某项目用户会话中所有未过期的键值记忆。"""
+        """列出某项目用户会话中的键值记忆。"""
         await self.ensure_enabled(project_id)
         async with self._session_factory() as session:
             result = await session.scalars(
@@ -304,7 +261,6 @@ class ProjectContextService:
                     ProjectSessionMemory.project_id == project_id,
                     ProjectSessionMemory.external_user_id == external_user_id,
                     ProjectSessionMemory.session_id == session_id,
-                    ProjectSessionMemory.expires_at > datetime.now(UTC),
                 )
                 .order_by(ProjectSessionMemory.memory_key)
             )
@@ -317,13 +273,10 @@ class ProjectContextService:
         session_id: str,
         memory_key: str,
         value: object,
-        ttl_seconds: int,
     ) -> ProjectSessionMemory:
-        """创建或原子更新短期键值记忆，并刷新过期时间。"""
+        """创建或原子更新会话键值记忆；数据保留到显式删除。"""
         await self.ensure_enabled(project_id)
         self._validate_json_value(value)
-        if not 60 <= ttl_seconds <= MAX_SESSION_TTL_SECONDS:
-            raise ValueError("ttl_seconds 必须在 60 秒到 30 天之间")
         now = datetime.now(UTC)
         statement = insert(ProjectSessionMemory).values(
             id=uuid4(),
@@ -333,7 +286,7 @@ class ProjectContextService:
             memory_key=memory_key,
             value_json=json.dumps(value, ensure_ascii=False, separators=(",", ":")),
             version=1,
-            expires_at=now + timedelta(seconds=ttl_seconds),
+            expires_at=None,
             created_at=now,
             updated_at=now,
         )
@@ -342,7 +295,6 @@ class ProjectContextService:
             set_={
                 "value_json": statement.excluded.value_json,
                 "version": ProjectSessionMemory.version + 1,
-                "expires_at": statement.excluded.expires_at,
                 "updated_at": now,
             },
         ).returning(ProjectSessionMemory)

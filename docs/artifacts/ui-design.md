@@ -76,7 +76,7 @@
 
 提示词模板页通过登录态资源 API 管理模板，owner/editor 可新增、修改、软删除，viewer 和管理员只读。模板字段包括项目内唯一名称、分类、正文和版本；正文可含调用方占位符，但首版网关原样存取，不负责变量渲染。Swagger UI 的 Project Resources 和 Project Context Gateway 分类都提供可执行请求示例；运行时可以按模板 ID 或分类/名称读取，项目由 API Key 确定。
 
-短期记忆页按 `external_user_id + session_id` 查询会话消息，显示 role、正文、顺序和过期时间；owner/editor 可以通过项目 API Key 追加消息，TTL 为 60 秒至 30 天。读取默认最近 50 条，最多读取 100 条。原有短期 key/value 接口保留兼容。长期记忆页按 `external_user_id` 管理跨会话文本条目及标签/元数据；画像页按 `external_user_id` 管理项目自定义 JSON，不要求统一 schema。后两类写入沿用 API Key 运行时接口和版本检查。
+短期记忆页按 `external_user_id + session_id` 查询会话消息，显示 role、正文和顺序；owner/editor 可以通过项目 API Key 追加消息。网关不会自动过期或清除数据，只有显式删除 API 会清除；页面明确提示长期保留。读取默认最近 50 条，最多读取 100 条。原有短期 key/value 接口保留兼容。长期记忆页按 `external_user_id` 管理跨会话文本条目及标签/元数据；画像页按 `external_user_id` 管理项目自定义 JSON，不要求统一 schema。后两类写入沿用 API Key 运行时接口和版本检查。
 
 动态上下文控制台查询通过 JWT 管理接口，不要求用户在浏览器中读取或暴露 API Key。项目 owner/editor 可以查询；viewer 和公开项目访客不能查用户动态数据；管理员可跨项目只读查询，写操作仍拒绝。项目 API Key 运行时接口继续服务外部 Agent。Key 可见性规则保持 owner/editor 可见；管理员查询由服务端按管理权限执行。
 

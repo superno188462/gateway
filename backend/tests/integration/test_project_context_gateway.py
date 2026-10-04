@@ -2,11 +2,12 @@
 
 import os
 import secrets
+from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import pytest
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.application.api_keys import ApiKeyService
@@ -18,6 +19,8 @@ from app.infrastructure.db.models import (
     Project,
     ProjectMember,
     ProjectServiceSubscription,
+    ProjectSessionMemory,
+    ProjectSessionMessage,
     User,
 )
 from app.security import JwtService
@@ -163,7 +166,17 @@ async def test_context_runtime_is_project_scoped_and_logged() -> None:
                 json={"value": {"step": 3}, "ttl_seconds": 300},
             )
             assert saved.status_code == 200
+            assert saved.json()["expires_at"] is None
             trace_ids.add(saved.headers["x-trace-id"])
+            async with factory.begin() as session:
+                await session.execute(
+                    update(ProjectSessionMemory)
+                    .where(
+                        ProjectSessionMemory.project_id == project_id,
+                        ProjectSessionMemory.memory_key == "state",
+                    )
+                    .values(expires_at=datetime.now(UTC) - timedelta(days=1))
+                )
             listed_session = await client.get(
                 "/v1/context/users/external-42/sessions/session-9/memories",
                 headers=key_headers,
@@ -183,10 +196,20 @@ async def test_context_runtime_is_project_scoped_and_logged() -> None:
                 },
             )
             assert appended_messages.status_code == 201
+            assert all(
+                item["expires_at"] is None
+                for item in appended_messages.json()["messages"]
+            )
             assert [item["sequence"] for item in appended_messages.json()["messages"]] == sorted(
                 item["sequence"] for item in appended_messages.json()["messages"]
             )
             trace_ids.add(appended_messages.headers["x-trace-id"])
+            async with factory.begin() as session:
+                await session.execute(
+                    update(ProjectSessionMessage)
+                    .where(ProjectSessionMessage.project_id == project_id)
+                    .values(expires_at=datetime.now(UTC) - timedelta(days=1))
+                )
             listed_messages = await client.get(
                 "/v1/context/users/external-42/sessions/session-9/messages?limit=10",
                 headers=key_headers,

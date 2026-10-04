@@ -52,7 +52,6 @@ class SessionMemoryWrite(BaseModel):
         description="兼容接口中的短期 JSON 值；新对话历史请使用 /messages。",
         examples=[{"step": "collecting_preferences", "language": "zh-CN"}],
     )
-    ttl_seconds: int = Field(default=86_400, ge=60, le=2_592_000, examples=[86400])
 
 
 class SessionMessageInput(BaseModel):
@@ -81,7 +80,6 @@ class SessionMessagesWrite(BaseModel):
                         {"role": "user", "content": "我喜欢简洁的中文回答。"},
                         {"role": "assistant", "content": "好的，我会尽量简洁地用中文回答。"},
                     ],
-                    "ttl_seconds": 86400,
                 }
             ]
         }
@@ -97,13 +95,6 @@ class SessionMessagesWrite(BaseModel):
                 {"role": "assistant", "content": "好的，我会尽量简洁地用中文回答。"},
             ]
         ],
-    )
-    ttl_seconds: int = Field(
-        default=86_400,
-        ge=60,
-        le=2_592_000,
-        description="本次追加消息的存活时间，范围 60 秒到 30 天。",
-        examples=[86400],
     )
 
 
@@ -196,7 +187,9 @@ class TemplateResponse(BaseModel):
 class SessionMessageResponse(SessionMessageInput):
     id: UUID = Field(description="网关生成的消息 ID。")
     sequence: int = Field(description="数据库生成的全局递增顺序值；同一会话按此字段排序。")
-    expires_at: datetime = Field(description="此消息的过期时间（UTC）。")
+    expires_at: datetime | None = Field(
+        default=None, description="保留字段；当前数据不会自动过期，显式删除前为 null。"
+    )
 
 
 class SessionMessagesResponse(BaseModel):
@@ -680,7 +673,10 @@ def _serialize_messages(
     "/users/{external_user_id}/sessions/{session_id}/messages",
     response_model=SessionMessagesResponse,
     summary="读取会话短期消息",
-    description="返回该项目用户会话最近的有效消息，按追加顺序排列；项目由 API Key 确定。",
+    description=(
+        "返回该项目用户会话最近的消息，按追加顺序排列；数据保留到显式删除，"
+        "项目由 API Key 确定。"
+    ),
 )
 async def list_session_messages(
     external_user_id: str,
@@ -712,7 +708,7 @@ async def list_session_messages(
     response_model=SessionMessagesResponse,
     status_code=201,
     summary="向会话追加短期消息",
-    description="按请求数组顺序追加 1 到 100 条消息；过期时间按本次请求统一设置。",
+    description="按请求数组顺序追加 1 到 100 条消息；网关不会自动删除，需调用 DELETE 接口清除。",
 )
 async def append_session_messages(
     external_user_id: str,
@@ -735,7 +731,6 @@ async def append_session_messages(
             external_user_id,
             session_id,
             [message.model_dump() for message in payload.messages],
-            payload.ttl_seconds,
         ),
     )
     if isinstance(result, JSONResponse):
@@ -795,7 +790,7 @@ async def put_session_memory(
         context,
         recorder,
         lambda project_id: context.put_session_memory(
-            project_id, external_user_id, session_id, memory_key, payload.value, payload.ttl_seconds
+            project_id, external_user_id, session_id, memory_key, payload.value
         ),
     )
     if isinstance(item, JSONResponse):
