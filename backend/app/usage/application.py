@@ -241,13 +241,19 @@ class RequestLogService:
         cursor_position = self._decode_cursor(cursor) if cursor else None
         async with self._session_factory() as session:
             await self._ensure_project_access(session, user, project_id)
-            filters = self._filters(user, start_at, end_at, project_id)
+            filters = self._filters(user, start_at, end_at, project_id, request_id=request_id)
             if status is not None:
                 filters.append(GatewayRequest.status == status)
             if service_code:
                 filters.append(GatewayRequest.service_code == service_code.strip())
             if request_id:
-                filters.append(GatewayRequest.request_id == request_id.strip())
+                request_value = request_id.strip()
+                filters.append(
+                    or_(
+                        GatewayRequest.request_id == request_value,
+                        GatewayRequest.trace_id == request_value,
+                    )
+                )
             total_count = await session.scalar(
                 select(func.count())
                 .select_from(GatewayRequest)
@@ -434,11 +440,18 @@ class RequestLogService:
         start_at: datetime,
         end_at: datetime,
         project_id: UUID | None,
+        *,
+        request_id: str | None = None,
     ) -> list[ColumnElement[bool]]:
-        filters: list[ColumnElement[bool]] = [
-            GatewayRequest.created_at >= start_at,
-            GatewayRequest.created_at < end_at,
-        ]
+        # 精确请求 ID/Trace ID 查询不应被页面遗留的日期范围挡住。
+        filters: list[ColumnElement[bool]] = []
+        if request_id is None:
+            filters.extend(
+                [
+                    GatewayRequest.created_at >= start_at,
+                    GatewayRequest.created_at < end_at,
+                ]
+            )
         if project_id is not None:
             filters.append(GatewayRequest.project_id == project_id)
         if user.role != "admin":

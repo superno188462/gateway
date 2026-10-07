@@ -1,9 +1,16 @@
 import { useCallback, useEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
 import { ApiClientError, apiClient, type LlmProviderCatalog, type UserServiceQuota } from "../api/client";
 import { useAuth } from "../auth/useAuth";
 
 type QuotaLookupMode = "username" | "user_id";
+
+const SERVICE_ROUTE: Record<string, { code: string; name: string }> = {
+  "/services/llm": { code: "mock-llm-v1", name: "LLM 服务" },
+  "/services/asr": { code: "asr-v1", name: "ASR 服务" },
+  "/services/embedding": { code: "embedding-v1", name: "Embedding 服务" },
+  "/services/rag": { code: "rag-v1", name: "向量数据库服务" },
+};
 
 function formatTokens(value: number): string {
   return new Intl.NumberFormat("zh-CN").format(value);
@@ -14,6 +21,8 @@ function errorMessage(reason: unknown): string {
 }
 
 export function MyServicesPage() {
+  const { pathname } = useLocation();
+  const activeService = SERVICE_ROUTE[pathname];
   const { token, user } = useAuth();
   const [services, setServices] = useState<UserServiceQuota[]>([]);
   const [providerCatalog, setProviderCatalog] = useState<LlmProviderCatalog | null>(null);
@@ -29,6 +38,9 @@ export function MyServicesPage() {
   const [isSavingQuota, setIsSavingQuota] = useState(false);
   const [adminError, setAdminError] = useState<string | null>(null);
   const [adminSuccess, setAdminSuccess] = useState<string | null>(null);
+  const visibleServices = activeService
+    ? services.filter((service) => service.service_code === activeService.code)
+    : services;
 
   const loadServices = useCallback(async () => {
     if (!token) return;
@@ -118,7 +130,7 @@ export function MyServicesPage() {
       <div className="intro-row">
         <div>
           <p className="page-kicker">账户</p>
-          <h2 id="my-services-title">我的服务</h2>
+          <h2 id="my-services-title">{activeService?.name ?? "我的服务"}</h2>
           <p className="page-description">查看每月可用额度、项目分配和本月用量。</p>
         </div>
         <button className="secondary-button" disabled={isLoading} onClick={() => void loadServices()} type="button">
@@ -135,7 +147,7 @@ export function MyServicesPage() {
         </div>
       )}
 
-      {providerCatalog && (
+      {providerCatalog && (!activeService || activeService.code === "mock-llm-v1") && (
         <section className="project-detail-panel service-provider-catalog" aria-labelledby="llm-route-catalog-title">
           <div>
             <p className="page-kicker">LLM 调用</p>
@@ -165,13 +177,13 @@ export function MyServicesPage() {
 
       {isLoading ? (
         <div className="empty-state service-page-state" aria-live="polite">正在加载服务额度…</div>
-      ) : error ? null : services.length === 0 ? (
+      ) : error ? null : visibleServices.length === 0 ? (
         <div className="empty-state service-page-state">
-          当前没有可用服务额度。如需开通，请联系管理员。
+          {activeService ? `当前没有${activeService.name}额度。如需开通，请联系管理员。` : "当前没有可用服务额度。如需开通，请联系管理员。"}
         </div>
       ) : (
         <div className="service-quota-list">
-          {services.map((service) => {
+          {visibleServices.map((service) => {
             const unitLabel = service.quota_unit === "seconds" ? "秒" : "tokens";
             const used = service.tokens_used + service.tokens_reserved;
             const usagePercent = service.monthly_token_limit > 0
@@ -192,7 +204,7 @@ export function MyServicesPage() {
                     </div>
                     <p>{service.service_code} · {service.service_code === "mock-llm-v1" ? "内置 mock-chat；其他模型名请按供应商文档填写，网关会原样转发" : `模型：${service.models.join("、") || "暂无"}`}</p>
                   </div>
-                  <Link className="secondary-button" to={`/services/${service.service_code === "project-context-v1" ? "context" : service.service_code === "asr-v1" ? "asr" : "llm"}/projects`}>管理项目</Link>
+                  <Link className="secondary-button" to={`/services/${service.service_code === "project-context-v1" ? "context" : service.service_code === "asr-v1" ? "asr" : service.service_code === "embedding-v1" ? "embedding" : service.service_code === "rag-v1" ? "rag" : "llm"}/projects`}>管理项目</Link>
                 </div>
 
                 <div className="service-quota-metrics">

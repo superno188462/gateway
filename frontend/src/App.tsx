@@ -12,6 +12,8 @@ import { ProjectApiKeysPage } from "./pages/ProjectApiKeysPage";
 import { MyServicesPage } from "./pages/MyServicesPage";
 import { LlmProvidersPage } from "./pages/LlmProvidersPage";
 import { AsrProvidersPage } from "./pages/AsrProvidersPage";
+import { EmbeddingProvidersPage } from "./pages/EmbeddingProvidersPage";
+import { ProjectRagPage } from "./pages/ProjectRagPage";
 import { DashboardPage } from "./pages/DashboardPage";
 import { RequestLogsPage } from "./pages/RequestLogsPage";
 import { SystemLogsPage } from "./pages/SystemLogsPage";
@@ -53,6 +55,10 @@ function AppShell() {
       ? "LLM API"
       : location.pathname === "/admin/asr/providers"
         ? "ASR API"
+      : location.pathname === "/admin/embedding/providers"
+        ? "Embedding API"
+      : location.pathname.endsWith("/rag")
+        ? "向量数据库"
       : location.pathname === "/projects/new"
     ? "创建项目"
     : location.pathname.endsWith("/keys")
@@ -99,6 +105,8 @@ function AppShell() {
           {servicesExpanded && <div className="nav-service-children">
             <NavLink className={({ isActive }) => `nav-item nav-item-child${isActive ? " nav-item-active" : ""}`} to="/services/llm">LLM</NavLink>
             <NavLink className={({ isActive }) => `nav-item nav-item-child${isActive ? " nav-item-active" : ""}`} to="/services/asr">ASR</NavLink>
+            <NavLink className={({ isActive }) => `nav-item nav-item-child${isActive ? " nav-item-active" : ""}`} to="/services/embedding">Embedding</NavLink>
+            <NavLink className={({ isActive }) => `nav-item nav-item-child${isActive ? " nav-item-active" : ""}`} to="/services/rag">向量数据库</NavLink>
             <NavLink className={({ isActive }) => `nav-item nav-item-child${isActive ? " nav-item-active" : ""}`} to="/services/context">上下文管理</NavLink>
           </div>}
           {user?.role === "admin" && (
@@ -127,6 +135,7 @@ function AppShell() {
               >
                 ASR API
               </NavLink>
+              <NavLink className={({ isActive }) => `nav-item${isActive ? " nav-item-active" : ""}`} to="/admin/embedding/providers">Embedding API</NavLink>
             </>
           )}
         </nav>
@@ -157,6 +166,7 @@ function AppShell() {
           <Route element={<ProjectsPage />} path="/projects" />
           <Route element={<ProjectCreatePage />} path="/projects/new" />
           <Route element={<ProjectDetailPage />} path="/projects/:projectId" />
+          <Route element={<ProjectRagPage />} path="/projects/:projectId/rag" />
           <Route element={<LegacyContextRedirect />} path="/projects/:projectId/context" />
           <Route element={<ContextServiceProjectsPage />} path="/services/context" />
           <Route element={<ContextServiceProjectsPage />} path="/services/context/projects" />
@@ -167,11 +177,16 @@ function AppShell() {
           <Route element={<MyServicesPage />} path="/services" />
           <Route element={<MyServicesPage />} path="/services/llm" />
           <Route element={<MyServicesPage />} path="/services/asr" />
+          <Route element={<MyServicesPage />} path="/services/embedding" />
+          <Route element={<MyServicesPage />} path="/services/rag" />
           <Route element={<ServiceProjectsPage />} path="/services/llm/projects" />
           <Route element={<ServiceProjectsPage serviceCode="asr-v1" serviceName="ASR" />} path="/services/asr/projects" />
+          <Route element={<ServiceProjectsPage serviceCode="embedding-v1" serviceName="Embedding" />} path="/services/embedding/projects" />
+          <Route element={<ServiceProjectsPage serviceCode="rag-v1" serviceName="向量数据库" />} path="/services/rag/projects" />
           <Route element={<Navigate replace to="/services/llm" />} path="/account/services" />
           <Route element={user?.role === "admin" ? <LlmProvidersPage /> : <Navigate replace to="/" />} path="/admin/llm/providers" />
           <Route element={user?.role === "admin" ? <AsrProvidersPage /> : <Navigate replace to="/" />} path="/admin/asr/providers" />
+          <Route element={user?.role === "admin" ? <EmbeddingProvidersPage /> : <Navigate replace to="/" />} path="/admin/embedding/providers" />
           <Route element={<Navigate replace to="/" />} path="*" />
         </Routes>
       </main>

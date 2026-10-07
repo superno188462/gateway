@@ -22,6 +22,12 @@ from app.service_management.api import router as llm_services_router
 from app.services.asr.admin_api import router as asr_provider_admin_router
 from app.services.asr.api import router as asr_gateway_router
 from app.services.asr.stream_api import router as asr_stream_router
+from app.services.embedding.admin_api import public_router as embedding_models_router
+from app.services.embedding.admin_api import router as embedding_provider_admin_router
+from app.services.embedding.api import router as embedding_gateway_router
+from app.services.embedding.console_api import router as rag_console_router
+from app.services.embedding.rag_api import router as rag_knowledge_router
+from app.services.embedding.vector_api import router as vector_store_router
 from app.services.llm.admin_api import public_router as llm_models_router
 from app.services.llm.admin_api import router as llm_provider_admin_router
 from app.services.llm.api import router as llm_gateway_router
@@ -116,6 +122,10 @@ def create_app(
     app.include_router(llm_services_router)
     app.include_router(account_services_router)
     app.include_router(llm_gateway_router)
+    app.include_router(embedding_gateway_router)
+    app.include_router(rag_knowledge_router)
+    app.include_router(vector_store_router)
+    app.include_router(rag_console_router)
     app.include_router(asr_gateway_router)
     app.include_router(asr_stream_router)
     app.include_router(asr_provider_admin_router)
@@ -123,6 +133,8 @@ def create_app(
     app.include_router(project_context_console_router)
     app.include_router(llm_models_router)
     app.include_router(llm_provider_admin_router)
+    app.include_router(embedding_models_router)
+    app.include_router(embedding_provider_admin_router)
     app.include_router(request_log_router)
     app.include_router(request_log_admin_router)
     app.include_router(technical_logging_router)

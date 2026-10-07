@@ -187,6 +187,42 @@ export type LlmProviderTestResult = {
   tested_at: string;
 };
 
+export type RagKnowledgeBase = {
+  id: string;
+  name: string;
+  description: string | null;
+  model: string;
+  chunk_size: number;
+  chunk_overlap: number;
+  vector_dimensions: number | null;
+  created_at: string;
+};
+
+export type RagDocument = {
+  id: string;
+  external_id: string | null;
+  title: string;
+  chunks: number;
+  created_at: string;
+};
+
+/** 一个独立文本切片向量的管理视图，不包含 embedding 数组。 */
+export type RagVector = {
+  id: string;
+  document_id: string;
+  external_id: string | null;
+  title: string;
+  content: string;
+  metadata: Record<string, unknown>;
+  sequence: number;
+  created_by_user_id: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type RagPermissions = { can_read: boolean; can_edit: boolean };
+export type RagSearchResponse = { knowledge_base_id: string; model: string; results: Array<{ chunk_id: string; document_id: string; title: string; content: string; score: number; metadata: Record<string, unknown> }> };
+
 /** 管理员配置的 ASR 上游连接。 */
 export type AsrProvider = {
   id: string;
@@ -643,6 +679,24 @@ export const apiClient = {
       method: "POST",
       body: JSON.stringify({ model }),
     }, token),
+  getEmbeddingProviders: (token: string) => request<LlmProvider[]>("/admin/v1/embedding/providers", {}, token),
+  createEmbeddingProvider: (token: string, payload: { name: string; supplier_name: string; route_prefix?: string; base_url: string; api_key: string }) =>
+    request<LlmProvider>("/admin/v1/embedding/providers", { method: "POST", body: JSON.stringify(payload) }, token),
+  updateEmbeddingProvider: (token: string, id: string, payload: { name?: string; supplier_name?: string; route_prefix?: string | null; base_url?: string; api_key?: string; status?: "active" | "disabled"; priority?: number }) =>
+    request<LlmProvider>(`/admin/v1/embedding/providers/${id}`, { method: "PATCH", body: JSON.stringify(payload) }, token),
+  deleteEmbeddingProvider: (token: string, id: string) => request<void>(`/admin/v1/embedding/providers/${id}`, { method: "DELETE" }, token),
+  testEmbeddingProvider: (token: string, id: string, model: string) => request<LlmProviderTestResult>(`/admin/v1/embedding/providers/${id}/test`, { method: "POST", body: JSON.stringify({ model }) }, token),
+  getRagPermissions: (token: string, projectId: string) => request<RagPermissions>(`/v1/rag/projects/${projectId}/permissions`, {}, token),
+  getRagKnowledgeBases: (token: string, projectId: string) => request<RagKnowledgeBase[]>(`/v1/rag/projects/${projectId}/knowledge-bases`, {}, token),
+  createRagKnowledgeBase: (token: string, projectId: string, payload: { name: string; description?: string; model: string; chunk_size: number; chunk_overlap: number }) => request<RagKnowledgeBase>(`/v1/rag/projects/${projectId}/knowledge-bases`, { method: "POST", body: JSON.stringify(payload) }, token),
+  deleteRagKnowledgeBase: (token: string, projectId: string, baseId: string) => request<void>(`/v1/rag/projects/${projectId}/knowledge-bases/${baseId}`, { method: "DELETE" }, token),
+  getRagDocuments: (token: string, projectId: string, baseId: string) => request<RagDocument[]>(`/v1/rag/projects/${projectId}/knowledge-bases/${baseId}/documents`, {}, token),
+  getRagVectors: (token: string, projectId: string, baseId: string) => request<RagVector[]>(`/v1/rag/projects/${projectId}/knowledge-bases/${baseId}/vectors`, {}, token),
+  updateRagVector: (token: string, projectId: string, baseId: string, vectorId: string, payload: { content: string; metadata: Record<string, unknown> }) => request<RagVector>(`/v1/rag/projects/${projectId}/knowledge-bases/${baseId}/vectors/${vectorId}`, { method: "PATCH", body: JSON.stringify(payload) }, token),
+  createRagDocument: (token: string, projectId: string, baseId: string, payload: { title: string; content: string; external_id?: string; metadata?: Record<string, unknown> }) => request<RagDocument>(`/v1/rag/projects/${projectId}/knowledge-bases/${baseId}/documents`, { method: "POST", body: JSON.stringify(payload) }, token),
+  deleteRagDocument: (token: string, projectId: string, baseId: string, documentId: string) => request<void>(`/v1/rag/projects/${projectId}/knowledge-bases/${baseId}/documents/${documentId}`, { method: "DELETE" }, token),
+  deleteRagVector: (token: string, projectId: string, baseId: string, vectorId: string) => request<void>(`/v1/rag/projects/${projectId}/knowledge-bases/${baseId}/vectors/${vectorId}`, { method: "DELETE" }, token),
+  searchRag: (token: string, projectId: string, baseId: string, query: string, top_k: number) => request<RagSearchResponse>(`/v1/rag/projects/${projectId}/knowledge-bases/${baseId}/search`, { method: "POST", body: JSON.stringify({ query, top_k }) }, token),
   getAsrProviders: (token: string) =>
     request<AsrProvider[]>("/admin/v1/asr/providers", {}, token),
   createAsrProvider: (

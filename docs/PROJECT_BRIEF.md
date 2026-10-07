@@ -48,11 +48,18 @@
 
 验收范围包括管理员配置、项目服务申请与额度、OpenAI 风格文件转写、实时 PCM WebSocket、上游错误映射、调用日志与秒额度、语句 final 唯一性及文档化的客户端调用方式。A8 功能已实现，并由用户完成自测。
 
+### A9：Embedding 与 RAG 知识库
+
+Embedding 首批支持 OpenAI 兼容纯文本嵌入，管理员按 LLM 上游连接方式配置 URL、API Key、模型前缀和故障切换；项目客户端使用项目 API Key 和公开模型名，Embedding 按独立 `embedding-v1` token 额度记账。RAG 首版以 PostgreSQL + pgvector 保存项目知识库、纯文本文档、切片、元数据及向量；提供知识库 CRUD、文档写入/删除、切片和 top-k cosine 检索，只返回命中片段，不自动调用 LLM。每库固定 embedding model，首条数据确定向量维度，检索严格限制项目范围。
+
+图像和视频能力采用模型适配器扩展：管理员配置/模型须明确支持的模态和协议；文本、图像、视频可能属于不同向量空间，只有共享嵌入空间的模型才能跨模态检索。首版数据库为模态、模型和向量维度留出字段，但暂不提供媒体上传、媒体对象存储和图像/视频上游适配器。二阶段根据指定供应商模型补齐对象存储和媒体协议，并评估 pgvector 近似索引。
+
 ### 后续版本
 
-- Embedding、TTS 的真实 Provider 接入。
+- 图像/视频 Embedding 供应商适配器与媒体对象存储。
+- TTS 的真实 Provider 接入。
 - 预算、配额、分项目限流、熔断和降级策略。
-- pgvector 语义检索与长期记忆召回。
+- pgvector HNSW/IVFFlat 近似索引与长期记忆召回。
 - 完整 OpenTelemetry 链路和生产级告警。
 - 多组织、细粒度 RBAC、外部计费或支付。
 

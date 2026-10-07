@@ -15,12 +15,13 @@
 | A6 | 模板与记忆 | 固定目录、文件 CRUD、并发冲突 | 已完成 |
 | A7 | 公网部署 | 容器构建、TLS、限流、备份、回滚和安全验收 | 已完成；服务器部署与安全验收通过（用户自测） |
 | A8 | ASR 服务 | 火山豆包文件转写与实时 WebSocket、独立秒额度、事件去重和日志 | 已完成；功能测试和用户自测通过 |
+| A9 | Embedding 与 RAG | OpenAI 兼容文本 Embedding、独立 token 额度、项目级 PostgreSQL + pgvector 知识库与检索 | 首版实现完成，待真实 pgvector 数据库迁移和端到端验收 |
 
 ## 当前状态
 
-- A1–A8 均已完成；A2、A4、A7 的待验收项由用户自测确认通过。A8 ASR 在原阶段计划之外新增，现已纳入正式阶段并完成。
+- A1–A8 均已完成；A2、A4、A7 的待验收项由用户自测确认通过。A8 ASR 在原阶段计划之外新增，现已纳入正式阶段并完成。A9 已开始开发。
 - A7 部署结构：项目提供后端镜像、前端静态构建导出任务、生产 Compose 和部署脚本；项目本身不运行 Nginx，由服务器现有 Nginx 托管静态文件并反代 API。服务器部署、TLS、限流、备份恢复与安全检查均由用户自测确认通过。
-- 后续可单独规划 Embedding、TTS 等服务，不属于 A1–A8 未完成事项。
+- A9 首批仅接 OpenAI 兼容文本 Embedding；图片/视频适配器预留，RAG 仅负责知识库管理和检索，不调用 LLM 生成答案。管理员 Embedding 页面沿用 LLM 管理样式；项目 RAG 控制台通过登录态 API 管理，viewer 只读，owner/editor 可写。
 - 运行约定：后端 `uv run python main.py`；前端使用 `npm run dev`；运行时数据库使用服务器 PostgreSQL。Docker 用于服务器部署。
 - DI 约定：`AppContainer` 注册配置、数据库引擎和基础设施服务单例；路由通过 FastAPI `Depends` 获取，不自行创建服务。
 
@@ -240,3 +241,11 @@
 - 语句 final 与会话结束分离：静音判停后可在同一 WebSocket 连接上继续收发；只有调用方发送 `end` 且上游会话完成后才结算并发送 `session.completed`。
 - 文档与示例：`docs/asr_websocket.md`、`docs/asr_websocket_client.py`。
 - 验证：ASR 定向测试 29 项通过，Ruff 和 mypy 通过；用户确认端到端自测通过。
+
+## A9 Embedding 与 RAG 首版
+
+- `embedding-v1` 提供 OpenAI 兼容 `POST /v1/embeddings`，管理员可维护多条上游连接、前缀路由、测试、优先级和故障切换；按独立 token 配额计量。
+- `rag-v1` 使用 PostgreSQL + pgvector 存储项目知识库、文本文档、切片、metadata 与向量；支持知识库创建/删除、文本写入/删除和 cosine top-k 检索。业务服务自行把检索片段交给 LLM。
+- 控制台已提供 Embedding API 管理页、项目详情 RAG 服务开通入口、RAG 知识库与检索测试页面。控制台使用登录态 API，无需粘贴项目 API Key；owner/editor 可写，viewer 只读。
+- 数据库迁移 `20261004_0038_embedding_rag` 创建 pgvector 扩展及业务表。迁移 SQL 编译通过；未在本轮执行数据库升级。当前向量检索是精确扫描，尚无 HNSW/IVFFlat 索引。
+- 完整后端测试有一项既有项目上下文集成测试因本地数据库尚未应用 `20261004_0039_context_data_no_auto_expiry` 失败；OpenAPI 契约已重新生成，需单独复跑。数据库升级前应确认目标是隔离测试库并运行 `uv run alembic upgrade head`。

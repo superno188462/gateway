@@ -62,7 +62,7 @@ class CreatedApiKey:
 class VerifiedApiKey:
     """验证成功后供后续网关用例使用的项目和 Key 标识。"""
 
-    id: UUID
+    id: UUID | None
     project_id: UUID
     owner_id: UUID
     name: str

@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import UUID, uuid4
 
+from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     JSON,
     BigInteger,
@@ -591,6 +592,147 @@ class AsrProviderConfig(Base):
     api_fingerprint: Mapped[str | None] = mapped_column(String(64))
     status: Mapped[str] = mapped_column(String(20), nullable=False, server_default="active")
     priority: Mapped[int] = mapped_column(Integer, nullable=False, server_default="100")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+
+class EmbeddingProviderConfig(Base):
+    """管理员维护的 OpenAI 兼容 Embedding 连接；API Key 只保存密文。"""
+
+    __tablename__ = "embedding_provider_configs"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('active', 'disabled')", name="ck_embedding_provider_configs_status"
+        ),
+        Index("ix_embedding_provider_configs_status", "status"),
+        UniqueConstraint("api_fingerprint", name="uq_embedding_provider_configs_api_fingerprint"),
+    )
+
+    id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), primary_key=True, default=uuid4)
+    name: Mapped[str] = mapped_column(String(100), nullable=False)
+    supplier_name: Mapped[str] = mapped_column(String(100), nullable=False)
+    route_prefix: Mapped[str | None] = mapped_column(String(64))
+    base_url: Mapped[str] = mapped_column(String(500), nullable=False)
+    encrypted_api_key: Mapped[str] = mapped_column(Text, nullable=False)
+    api_fingerprint: Mapped[str | None] = mapped_column(String(64))
+    status: Mapped[str] = mapped_column(String(20), nullable=False, server_default="active")
+    priority: Mapped[int] = mapped_column(Integer, nullable=False, server_default="100")
+    last_tested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_test_success: Mapped[bool | None] = mapped_column()
+    last_test_message: Mapped[str | None] = mapped_column(String(250))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+
+class EmbeddingRequestUsage(Base):
+    """Embedding 请求使用的模型、模态和 token 用量。"""
+
+    __tablename__ = "embedding_request_usages"
+
+    request_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("gateway_requests.request_id", ondelete="CASCADE"), primary_key=True
+    )
+    model: Mapped[str] = mapped_column(String(200), nullable=False)
+    modality: Mapped[str] = mapped_column(String(20), nullable=False, server_default="text")
+    input_tokens: Mapped[int] = mapped_column(nullable=False, server_default="0")
+    vector_dimensions: Mapped[int | None] = mapped_column(Integer)
+
+
+class RagKnowledgeBase(Base):
+    """按项目隔离的向量知识库；创建后固定模型，避免混用向量空间。"""
+
+    __tablename__ = "rag_knowledge_bases"
+    __table_args__ = (
+        UniqueConstraint("project_id", "name", name="uq_rag_knowledge_bases_project_name"),
+        Index("ix_rag_knowledge_bases_project_created", "project_id", "created_at"),
+    )
+
+    id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), primary_key=True, default=uuid4)
+    project_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
+    )
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    description: Mapped[str | None] = mapped_column(String(1000))
+    embedding_model: Mapped[str] = mapped_column(String(200), nullable=False)
+    chunk_size: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1000")
+    chunk_overlap: Mapped[int] = mapped_column(Integer, nullable=False, server_default="120")
+    vector_dimensions: Mapped[int | None] = mapped_column(Integer)
+    created_by: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+
+class RagDocument(Base):
+    """知识库中的一个逻辑文档；当前首发支持文本内容。"""
+
+    __tablename__ = "rag_documents"
+    __table_args__ = (
+        UniqueConstraint("knowledge_base_id", "external_id", name="uq_rag_documents_external_id"),
+        Index("ix_rag_documents_kb_created", "knowledge_base_id", "created_at"),
+    )
+
+    id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), primary_key=True, default=uuid4)
+    knowledge_base_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("rag_knowledge_bases.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    external_id: Mapped[str | None] = mapped_column(String(200))
+    title: Mapped[str] = mapped_column(String(500), nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    metadata_json: Mapped[dict[str, object]] = mapped_column(JSON, nullable=False, default=dict)
+    created_by: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+
+class RagChunk(Base):
+    """pgvector 中保存的文本切片；media_type/model/dimensions 为多模态扩展预留。"""
+
+    __tablename__ = "rag_chunks"
+    __table_args__ = (
+        Index("ix_rag_chunks_kb_document", "knowledge_base_id", "document_id", "sequence"),
+        Index("ix_rag_chunks_kb_modality", "knowledge_base_id", "modality"),
+    )
+
+    id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), primary_key=True, default=uuid4)
+    knowledge_base_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("rag_knowledge_bases.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    document_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("rag_documents.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    sequence: Mapped[int] = mapped_column(Integer, nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    embedding: Mapped[list[float]] = mapped_column(Vector(), nullable=False)
+    embedding_model: Mapped[str] = mapped_column(String(200), nullable=False)
+    dimensions: Mapped[int] = mapped_column(Integer, nullable=False)
+    modality: Mapped[str] = mapped_column(String(20), nullable=False, server_default="text")
+    metadata_json: Mapped[dict[str, object]] = mapped_column(JSON, nullable=False, default=dict)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

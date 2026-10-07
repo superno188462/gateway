@@ -1299,6 +1299,949 @@ paths:
                 $ref: '#/components/schemas/HTTPValidationError'
       security:
       - HTTPBearer: []
+  /v1/embeddings:
+    post:
+      tags:
+      - Embedding Gateway
+      summary: 创建文本嵌入向量
+      description: 以项目 API Key 鉴权，遵循 OpenAI Embeddings 响应结构并记录 token 用量。
+      operationId: create_embeddings_v1_embeddings_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EmbeddingRequest'
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+      security:
+      - HTTPBearer: []
+  /v1/rag/knowledge-bases:
+    get:
+      tags:
+      - RAG Knowledge Base
+      summary: List Knowledge Bases
+      operationId: list_knowledge_bases_v1_rag_knowledge_bases_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/KnowledgeBaseResponse'
+                type: array
+                title: Response List Knowledge Bases V1 Rag Knowledge Bases Get
+      security:
+      - HTTPBearer: []
+    post:
+      tags:
+      - RAG Knowledge Base
+      summary: Create Knowledge Base
+      operationId: create_knowledge_base_v1_rag_knowledge_bases_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/KnowledgeBaseCreateRequest'
+        required: true
+      responses:
+        '201':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/KnowledgeBaseResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+      security:
+      - HTTPBearer: []
+  /v1/rag/knowledge-bases/{knowledge_base_id}:
+    delete:
+      tags:
+      - RAG Knowledge Base
+      summary: Delete Knowledge Base
+      operationId: delete_knowledge_base_v1_rag_knowledge_bases__knowledge_base_id__delete
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: knowledge_base_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Knowledge Base Id
+      responses:
+        '204':
+          description: Successful Response
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /v1/rag/knowledge-bases/{knowledge_base_id}/documents:
+    post:
+      tags:
+      - RAG Knowledge Base
+      summary: Create Document
+      operationId: create_document_v1_rag_knowledge_bases__knowledge_base_id__documents_post
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: knowledge_base_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Knowledge Base Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DocumentCreateRequest'
+      responses:
+        '201':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DocumentResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    get:
+      tags:
+      - RAG Knowledge Base
+      summary: List Documents
+      operationId: list_documents_v1_rag_knowledge_bases__knowledge_base_id__documents_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: knowledge_base_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Knowledge Base Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/DocumentResponse'
+                title: Response List Documents V1 Rag Knowledge Bases  Knowledge Base
+                  Id  Documents Get
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /v1/rag/knowledge-bases/{knowledge_base_id}/vectors:
+    get:
+      tags:
+      - RAG Knowledge Base
+      summary: 列出集合内的独立向量记录
+      description: 兼容管理页面逐条查看历史切片；既有文档列表接口保持原有聚合响应。
+      operationId: list_vectors_v1_rag_knowledge_bases__knowledge_base_id__vectors_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: knowledge_base_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Knowledge Base Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/VectorResponse'
+                title: Response List Vectors V1 Rag Knowledge Bases  Knowledge Base
+                  Id  Vectors Get
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /v1/rag/knowledge-bases/{knowledge_base_id}/documents/{document_id}:
+    delete:
+      tags:
+      - RAG Knowledge Base
+      summary: Delete Document
+      operationId: delete_document_v1_rag_knowledge_bases__knowledge_base_id__documents__document_id__delete
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: knowledge_base_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Knowledge Base Id
+      - name: document_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Document Id
+      responses:
+        '204':
+          description: Successful Response
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /v1/rag/knowledge-bases/{knowledge_base_id}/vectors/{vector_id}:
+    delete:
+      tags:
+      - RAG Knowledge Base
+      summary: 删除一条向量记录
+      description: 只删除指定切片；若它是关联文档的最后一片，则同时清理空文档。
+      operationId: delete_vector_v1_rag_knowledge_bases__knowledge_base_id__vectors__vector_id__delete
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: knowledge_base_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Knowledge Base Id
+      - name: vector_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Vector Id
+      responses:
+        '204':
+          description: Successful Response
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    patch:
+      tags:
+      - RAG Knowledge Base
+      summary: 修改一条向量记录
+      description: 更新文本或 Metadata；文本变化时重新生成向量并计入 Embedding 用量。
+      operationId: update_vector_v1_rag_knowledge_bases__knowledge_base_id__vectors__vector_id__patch
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: knowledge_base_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Knowledge Base Id
+      - name: vector_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Vector Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VectorUpdateRequest'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VectorResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /v1/rag/knowledge-bases/{knowledge_base_id}/search:
+    post:
+      tags:
+      - RAG Knowledge Base
+      summary: Search Knowledge Base
+      operationId: search_knowledge_base_v1_rag_knowledge_bases__knowledge_base_id__search_post
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: knowledge_base_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Knowledge Base Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SearchRequest'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+                title: Response Search Knowledge Base V1 Rag Knowledge Bases  Knowledge
+                  Base Id  Search Post
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /v1/vector-stores/collections:
+    get:
+      tags:
+      - Vector Database
+      summary: List Collections
+      operationId: list_collections_v1_vector_stores_collections_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/CollectionResponse'
+                type: array
+                title: Response List Collections V1 Vector Stores Collections Get
+      security:
+      - HTTPBearer: []
+    post:
+      tags:
+      - Vector Database
+      summary: Create Collection
+      operationId: create_collection_v1_vector_stores_collections_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CollectionCreateRequest'
+        required: true
+      responses:
+        '201':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CollectionResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+      security:
+      - HTTPBearer: []
+  /v1/vector-stores/collections/{collection}:
+    delete:
+      tags:
+      - Vector Database
+      summary: Delete Collection
+      operationId: delete_collection_v1_vector_stores_collections__collection__delete
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: collection
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Collection
+      responses:
+        '204':
+          description: Successful Response
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /v1/vector-stores/collections/{collection}/upsert:
+    post:
+      tags:
+      - Vector Database
+      summary: 批量写入已切分的向量记录
+      description: 每个 vectors 项都必须是调用方预先切好的单条文本片段。网关不会对其再次切片；每项独立生成一个向量并保存该项的 metadata。记录长度不能超过集合
+        chunk_size。旧客户端仍可使用 documents 作为字段名。
+      operationId: upsert_vectors_v1_vector_stores_collections__collection__upsert_post
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: collection
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Collection
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpsertRequest'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+                title: Response Upsert Vectors V1 Vector Stores Collections  Collection  Upsert
+                  Post
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /v1/vector-stores/collections/{collection}/query:
+    post:
+      tags:
+      - Vector Database
+      summary: Query Collection
+      operationId: query_collection_v1_vector_stores_collections__collection__query_post
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: collection
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Collection
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/QueryRequest'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+                title: Response Query Collection V1 Vector Stores Collections  Collection  Query
+                  Post
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /v1/vector-stores/collections/{collection}/delete:
+    post:
+      tags:
+      - Vector Database
+      summary: Delete Documents
+      operationId: delete_documents_v1_vector_stores_collections__collection__delete_post
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: collection
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Collection
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DeleteRequest'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+                title: Response Delete Documents V1 Vector Stores Collections  Collection  Delete
+                  Post
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v1/rag/projects/{project_id}/permissions:
+    get:
+      tags:
+      - RAG Console
+      summary: Permissions
+      operationId: permissions_api_v1_rag_projects__project_id__permissions_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: project_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Project Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PermissionsResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v1/rag/projects/{project_id}/knowledge-bases:
+    get:
+      tags:
+      - RAG Console
+      summary: List Knowledge Bases
+      operationId: list_knowledge_bases_api_v1_rag_projects__project_id__knowledge_bases_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: project_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Project Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/KnowledgeBaseResponse'
+                title: Response List Knowledge Bases Api V1 Rag Projects  Project
+                  Id  Knowledge Bases Get
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    post:
+      tags:
+      - RAG Console
+      summary: Create Knowledge Base
+      operationId: create_knowledge_base_api_v1_rag_projects__project_id__knowledge_bases_post
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: project_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Project Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/KnowledgeBaseCreateRequest'
+      responses:
+        '201':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/KnowledgeBaseResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v1/rag/projects/{project_id}/knowledge-bases/{knowledge_base_id}:
+    delete:
+      tags:
+      - RAG Console
+      summary: Delete Knowledge Base
+      operationId: delete_knowledge_base_api_v1_rag_projects__project_id__knowledge_bases__knowledge_base_id__delete
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: project_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Project Id
+      - name: knowledge_base_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Knowledge Base Id
+      responses:
+        '204':
+          description: Successful Response
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v1/rag/projects/{project_id}/knowledge-bases/{knowledge_base_id}/documents:
+    get:
+      tags:
+      - RAG Console
+      summary: List Documents
+      operationId: list_documents_api_v1_rag_projects__project_id__knowledge_bases__knowledge_base_id__documents_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: project_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Project Id
+      - name: knowledge_base_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Knowledge Base Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/DocumentResponse'
+                title: Response List Documents Api V1 Rag Projects  Project Id  Knowledge
+                  Bases  Knowledge Base Id  Documents Get
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    post:
+      tags:
+      - RAG Console
+      summary: Create Document
+      operationId: create_document_api_v1_rag_projects__project_id__knowledge_bases__knowledge_base_id__documents_post
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: project_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Project Id
+      - name: knowledge_base_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Knowledge Base Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DocumentCreateRequest'
+      responses:
+        '201':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DocumentResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v1/rag/projects/{project_id}/knowledge-bases/{knowledge_base_id}/vectors:
+    get:
+      tags:
+      - RAG Console
+      summary: 列出集合内的独立向量记录
+      description: 按数据库中的向量切片逐条返回，包含来源标题、正文和 Metadata。
+      operationId: list_vectors_api_v1_rag_projects__project_id__knowledge_bases__knowledge_base_id__vectors_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: project_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Project Id
+      - name: knowledge_base_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Knowledge Base Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/VectorResponse'
+                title: Response List Vectors Api V1 Rag Projects  Project Id  Knowledge
+                  Bases  Knowledge Base Id  Vectors Get
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v1/rag/projects/{project_id}/knowledge-bases/{knowledge_base_id}/documents/{document_id}:
+    delete:
+      tags:
+      - RAG Console
+      summary: Delete Document
+      operationId: delete_document_api_v1_rag_projects__project_id__knowledge_bases__knowledge_base_id__documents__document_id__delete
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: project_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Project Id
+      - name: knowledge_base_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Knowledge Base Id
+      - name: document_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Document Id
+      responses:
+        '204':
+          description: Successful Response
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v1/rag/projects/{project_id}/knowledge-bases/{knowledge_base_id}/vectors/{vector_id}:
+    delete:
+      tags:
+      - RAG Console
+      summary: 删除一条向量记录
+      description: 仅删除指定切片；若它是关联文档的最后一片，同时清理空文档。
+      operationId: delete_vector_api_v1_rag_projects__project_id__knowledge_bases__knowledge_base_id__vectors__vector_id__delete
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: project_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Project Id
+      - name: knowledge_base_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Knowledge Base Id
+      - name: vector_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Vector Id
+      responses:
+        '204':
+          description: Successful Response
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    patch:
+      tags:
+      - RAG Console
+      summary: 修改一条向量记录
+      description: 更新文本或 Metadata；文本变化时重新生成向量并计入 Embedding 用量。
+      operationId: update_vector_api_v1_rag_projects__project_id__knowledge_bases__knowledge_base_id__vectors__vector_id__patch
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: project_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Project Id
+      - name: knowledge_base_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Knowledge Base Id
+      - name: vector_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Vector Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VectorUpdateRequest'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VectorResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v1/rag/projects/{project_id}/knowledge-bases/{knowledge_base_id}/search:
+    post:
+      tags:
+      - RAG Console
+      summary: Search
+      operationId: search_api_v1_rag_projects__project_id__knowledge_bases__knowledge_base_id__search_post
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: project_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Project Id
+      - name: knowledge_base_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Knowledge Base Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SearchRequest'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SearchConsoleResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
   /v1/audio/transcriptions:
     post:
       tags:
@@ -2335,7 +3278,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/CreateProviderRequest'
+              $ref: '#/components/schemas/app__services__llm__admin_api__CreateProviderRequest'
         required: true
       responses:
         '201':
@@ -2376,7 +3319,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/UpdateProviderRequest'
+              $ref: '#/components/schemas/app__services__llm__admin_api__UpdateProviderRequest'
       responses:
         '200':
           description: Successful Response
@@ -2439,14 +3382,169 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/ProviderTestRequest'
+              $ref: '#/components/schemas/app__services__llm__admin_api__ProviderTestRequest'
       responses:
         '200':
           description: Successful Response
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ProviderTestResponse'
+                $ref: '#/components/schemas/app__services__llm__admin_api__ProviderTestResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v1/embedding/provider-catalog:
+    get:
+      tags:
+      - Embedding
+      summary: Provider Catalog
+      operationId: provider_catalog_api_v1_embedding_provider_catalog_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/app__services__embedding__admin_api__PublicRouteGroupResponse'
+                type: array
+                title: Response Provider Catalog Api V1 Embedding Provider Catalog
+                  Get
+  /api/admin/v1/embedding/providers:
+    get:
+      tags:
+      - Embedding Provider Management
+      summary: List Providers
+      operationId: list_providers_api_admin_v1_embedding_providers_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/app__services__embedding__admin_api__ProviderResponse'
+                type: array
+                title: Response List Providers Api Admin V1 Embedding Providers Get
+      security:
+      - HTTPBearer: []
+    post:
+      tags:
+      - Embedding Provider Management
+      summary: Create Provider
+      operationId: create_provider_api_admin_v1_embedding_providers_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/app__services__embedding__admin_api__CreateProviderRequest'
+        required: true
+      responses:
+        '201':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/app__services__embedding__admin_api__ProviderResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+      security:
+      - HTTPBearer: []
+  /api/admin/v1/embedding/providers/{provider_id}:
+    patch:
+      tags:
+      - Embedding Provider Management
+      summary: Update Provider
+      operationId: update_provider_api_admin_v1_embedding_providers__provider_id__patch
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: provider_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Provider Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/app__services__embedding__admin_api__UpdateProviderRequest'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/app__services__embedding__admin_api__ProviderResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    delete:
+      tags:
+      - Embedding Provider Management
+      summary: Delete Provider
+      operationId: delete_provider_api_admin_v1_embedding_providers__provider_id__delete
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: provider_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Provider Id
+      responses:
+        '204':
+          description: Successful Response
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/admin/v1/embedding/providers/{provider_id}/test:
+    post:
+      tags:
+      - Embedding Provider Management
+      summary: Test Provider
+      operationId: test_provider_api_admin_v1_embedding_providers__provider_id__test_post
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: provider_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Provider Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/app__services__embedding__admin_api__ProviderTestRequest'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/app__services__embedding__admin_api__ProviderTestResponse'
         '422':
           description: Validation Error
           content:
@@ -3268,7 +4366,7 @@ components:
           type: string
           contentMediaType: application/octet-stream
           title: File
-          description: 必填。当前支持 WAV、MP3、OGG、M4A；裸 PCM 暂不支持。
+          description: 必填。支持 WAV、MP3、OGG、M4A，以及固定为 16 kHz、16-bit 小端、单声道的裸 PCM。
         model:
           type: string
           maxLength: 200
@@ -3490,6 +4588,84 @@ components:
       - content
       title: ChatMessageRequest
       description: 兼容 Chat Completions 的消息，允许 tool 和多模态等扩展字段。
+    CollectionCreateRequest:
+      properties:
+        name:
+          type: string
+          maxLength: 200
+          minLength: 1
+          title: Name
+        description:
+          anyOf:
+          - type: string
+            maxLength: 1000
+          - type: 'null'
+          title: Description
+        model:
+          type: string
+          maxLength: 200
+          minLength: 1
+          title: Model
+        chunk_size:
+          type: integer
+          maximum: 6000.0
+          minimum: 100.0
+          title: Chunk Size
+          default: 1000
+        chunk_overlap:
+          type: integer
+          maximum: 2000.0
+          minimum: 0.0
+          title: Chunk Overlap
+          default: 120
+      type: object
+      required:
+      - name
+      - model
+      title: CollectionCreateRequest
+      description: 创建集合；`chunk_size` 同时作为单条已切分记录的字符上限。
+    CollectionResponse:
+      properties:
+        id:
+          type: string
+          format: uuid
+          title: Id
+        collection:
+          type: string
+          title: Collection
+        description:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Description
+        model:
+          type: string
+          title: Model
+        vector_dimensions:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Vector Dimensions
+        chunk_size:
+          type: integer
+          title: Chunk Size
+        chunk_overlap:
+          type: integer
+          title: Chunk Overlap
+        created_at:
+          type: string
+          title: Created At
+      type: object
+      required:
+      - id
+      - collection
+      - description
+      - model
+      - vector_dimensions
+      - chunk_size
+      - chunk_overlap
+      - created_at
+      title: CollectionResponse
     ContextPermissionResponse:
       properties:
         can_read_user_data:
@@ -3587,46 +4763,113 @@ components:
       - visibility
       - owner_id
       title: ContextProjectResponse
-    CreateProviderRequest:
+    DeleteRequest:
       properties:
-        name:
-          type: string
-          maxLength: 100
-          minLength: 1
-          title: Name
-          description: 管理员自定义的供应商名称。
-        supplier_name:
-          anyOf:
-          - type: string
-            maxLength: 100
-            minLength: 1
-          - type: 'null'
-          title: Supplier Name
-          description: 面向用户展示的供应商名称；省略时沿用连接名称。
-        route_prefix:
-          anyOf:
-          - type: string
-            maxLength: 64
-          - type: 'null'
-          title: Route Prefix
-          description: 可选模型路由前缀，例如 volc；留空表示只参与默认池。
-        base_url:
-          type: string
-          maxLength: 500
-          title: Base Url
-          description: OpenAI 兼容 API Base URL，通常以 /v1 结尾。
-        api_key:
-          type: string
-          maxLength: 4000
-          minLength: 1
-          title: Api Key
-          description: 上游供应商 API Key，仅写入。
+        ids:
+          items:
+            type: string
+          type: array
+          maxItems: 256
+          minItems: 1
+          title: Ids
       type: object
       required:
-      - name
-      - base_url
-      - api_key
-      title: CreateProviderRequest
+      - ids
+      title: DeleteRequest
+    DocumentCreateRequest:
+      properties:
+        title:
+          type: string
+          maxLength: 500
+          minLength: 1
+          title: Title
+        content:
+          type: string
+          maxLength: 200000
+          minLength: 1
+          title: Content
+        external_id:
+          anyOf:
+          - type: string
+            maxLength: 200
+          - type: 'null'
+          title: External Id
+        metadata:
+          additionalProperties: true
+          type: object
+          title: Metadata
+      type: object
+      required:
+      - title
+      - content
+      title: DocumentCreateRequest
+    DocumentResponse:
+      properties:
+        id:
+          type: string
+          format: uuid
+          title: Id
+        external_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: External Id
+        title:
+          type: string
+          title: Title
+        chunks:
+          type: integer
+          title: Chunks
+        created_at:
+          type: string
+          title: Created At
+      type: object
+      required:
+      - id
+      - external_id
+      - title
+      - chunks
+      - created_at
+      title: DocumentResponse
+    EmbeddingRequest:
+      properties:
+        model:
+          type: string
+          maxLength: 200
+          minLength: 1
+          title: Model
+        input:
+          anyOf:
+          - type: string
+          - items:
+              type: string
+            type: array
+          title: Input
+          description: 单段文本或文本数组；图像和视频由后续模态适配器支持。
+        encoding_format:
+          type: string
+          title: Encoding Format
+          description: 目前仅支持 float。
+          default: float
+        dimensions:
+          anyOf:
+          - type: integer
+            maximum: 65536.0
+            minimum: 1.0
+          - type: 'null'
+          title: Dimensions
+        user:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: User
+      additionalProperties: true
+      type: object
+      required:
+      - model
+      - input
+      title: EmbeddingRequest
+      description: OpenAI embeddings.create 请求的首发子集（纯文本输入）。
     ErrorResponse:
       properties:
         code:
@@ -3669,6 +4912,83 @@ components:
       - status
       title: HealthResponse
       description: 健康检查成功响应。
+    KnowledgeBaseCreateRequest:
+      properties:
+        name:
+          type: string
+          maxLength: 200
+          minLength: 1
+          title: Name
+        description:
+          anyOf:
+          - type: string
+            maxLength: 1000
+          - type: 'null'
+          title: Description
+        model:
+          type: string
+          maxLength: 200
+          minLength: 1
+          title: Model
+        chunk_size:
+          type: integer
+          maximum: 6000.0
+          minimum: 100.0
+          title: Chunk Size
+          default: 1000
+        chunk_overlap:
+          type: integer
+          maximum: 2000.0
+          minimum: 0.0
+          title: Chunk Overlap
+          default: 120
+      type: object
+      required:
+      - name
+      - model
+      title: KnowledgeBaseCreateRequest
+    KnowledgeBaseResponse:
+      properties:
+        id:
+          type: string
+          format: uuid
+          title: Id
+        name:
+          type: string
+          title: Name
+        description:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Description
+        model:
+          type: string
+          title: Model
+        chunk_size:
+          type: integer
+          title: Chunk Size
+        chunk_overlap:
+          type: integer
+          title: Chunk Overlap
+        vector_dimensions:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Vector Dimensions
+        created_at:
+          type: string
+          title: Created At
+      type: object
+      required:
+      - id
+      - name
+      - description
+      - model
+      - chunk_size
+      - chunk_overlap
+      - vector_dimensions
+      - created_at
+      title: KnowledgeBaseResponse
     LoginRequest:
       properties:
         username:
@@ -3770,6 +5090,19 @@ components:
         tags:
         - 偏好
         - 表达方式
+    PermissionsResponse:
+      properties:
+        can_read:
+          type: boolean
+          title: Can Read
+        can_edit:
+          type: boolean
+          title: Can Edit
+      type: object
+      required:
+      - can_read
+      - can_edit
+      title: PermissionsResponse
     ProfileWrite:
       properties:
         profile:
@@ -4121,6 +5454,13 @@ components:
           title: Route Prefix
           description: 客户端模型路由前缀。
           default: volc
+        model_name:
+          type: string
+          maxLength: 200
+          minLength: 1
+          title: Model Name
+          description: 客户端 start.model 传入的公开模型名；不包含服务商前缀。
+          default: doubao-seed-asr-2.0
         resource_id:
           type: string
           maxLength: 200
@@ -4150,36 +5490,6 @@ components:
       - realtime_url
       - api_key
       title: ProviderPayload
-    ProviderTestRequest:
-      properties:
-        model:
-          type: string
-          maxLength: 200
-          minLength: 1
-          title: Model
-          description: 用于该连接测试的上游模型名。
-      type: object
-      required:
-      - model
-      title: ProviderTestRequest
-    ProviderTestResponse:
-      properties:
-        success:
-          type: boolean
-          title: Success
-        message:
-          type: string
-          title: Message
-        tested_at:
-          type: string
-          title: Tested At
-      type: object
-      required:
-      - success
-      - message
-      - tested_at
-      title: ProviderTestResponse
-      description: 供应商连通性测试结果。
     ProviderUpdatePayload:
       properties:
         name:
@@ -4201,6 +5511,13 @@ components:
             const: volc
           - type: 'null'
           title: Route Prefix
+        model_name:
+          anyOf:
+          - type: string
+            maxLength: 200
+            minLength: 1
+          - type: 'null'
+          title: Model Name
         resource_id:
           anyOf:
           - type: string
@@ -4240,38 +5557,37 @@ components:
       properties:
         groups:
           items:
-            $ref: '#/components/schemas/PublicRouteGroupResponse'
+            $ref: '#/components/schemas/app__services__llm__admin_api__PublicRouteGroupResponse'
           type: array
           title: Groups
       type: object
       required:
       - groups
       title: PublicProviderCatalogResponse
-    PublicRouteGroupResponse:
+    QueryRequest:
       properties:
-        prefix:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Prefix
-          description: null 表示默认池；非空值可作为 model 前缀。
-        suppliers:
-          items:
-            type: string
-          type: array
-          title: Suppliers
-          description: 去重后的供应商显示名称。
-        connection_count:
+        query:
+          type: string
+          maxLength: 10000
+          minLength: 1
+          title: Query
+        top_k:
           type: integer
-          title: Connection Count
-          description: 当前启用的上游连接数量。
+          maximum: 20.0
+          minimum: 1.0
+          title: Top K
+          default: 5
+        metadata:
+          anyOf:
+          - additionalProperties: true
+            type: object
+          - type: 'null'
+          title: Metadata
       type: object
       required:
-      - prefix
-      - suppliers
-      - connection_count
-      title: PublicRouteGroupResponse
-      description: 调用方可用的供应商名称和模型路由前缀摘要。
+      - query
+      title: QueryRequest
+      description: 向量相似度查询；metadata 按 JSONB 包含语义过滤。
     QuotaTargetResponse:
       properties:
         id:
@@ -4760,6 +6076,44 @@ components:
       - error_code
       title: RetentionRunResponse
       description: 日志保留任务状态，不暴露异常详情或数据库错误。
+    SearchConsoleResponse:
+      properties:
+        knowledge_base_id:
+          type: string
+          format: uuid
+          title: Knowledge Base Id
+        model:
+          type: string
+          title: Model
+        results:
+          items:
+            additionalProperties: true
+            type: object
+          type: array
+          title: Results
+      type: object
+      required:
+      - knowledge_base_id
+      - model
+      - results
+      title: SearchConsoleResponse
+    SearchRequest:
+      properties:
+        query:
+          type: string
+          maxLength: 10000
+          minLength: 1
+          title: Query
+        top_k:
+          type: integer
+          maximum: 20.0
+          minimum: 1.0
+          title: Top K
+          default: 5
+      type: object
+      required:
+      - query
+      title: SearchRequest
     ServiceApplicationRequest:
       properties:
         service_code:
@@ -5231,60 +6585,22 @@ components:
       - expires_in
       title: TokenResponse
       description: 管理员访问令牌响应。
-    UpdateProviderRequest:
+    UpsertRequest:
       properties:
-        name:
-          anyOf:
-          - type: string
-            maxLength: 100
-            minLength: 1
-          - type: 'null'
-          title: Name
-        supplier_name:
-          anyOf:
-          - type: string
-            maxLength: 100
-            minLength: 1
-          - type: 'null'
-          title: Supplier Name
-        route_prefix:
-          anyOf:
-          - type: string
-            maxLength: 64
-          - type: 'null'
-          title: Route Prefix
-          description: 空字符串清除前缀。
-        base_url:
-          anyOf:
-          - type: string
-            maxLength: 500
-          - type: 'null'
-          title: Base Url
-        api_key:
-          anyOf:
-          - type: string
-            maxLength: 4000
-          - type: 'null'
-          title: Api Key
-          description: 留空表示不轮换密钥。
-        status:
-          anyOf:
-          - type: string
-            enum:
-            - active
-            - disabled
-          - type: 'null'
-          title: Status
-        priority:
-          anyOf:
-          - type: integer
-            maximum: 1000000.0
-            minimum: 0.0
-          - type: 'null'
-          title: Priority
-          description: 越小越优先。
+        vectors:
+          items:
+            $ref: '#/components/schemas/VectorDocument'
+          type: array
+          maxItems: 64
+          minItems: 1
+          title: Vectors
+          description: 调用方已切分好的向量记录列表，每项独立生成一条向量并使用自己的 metadata。为兼容旧客户端也接受 documents
+            字段。
       type: object
-      title: UpdateProviderRequest
+      required:
+      - vectors
+      title: UpsertRequest
+      description: 批量写入已切分记录；每个输入项恰好生成一条向量。
     UserResponse:
       properties:
         id:
@@ -5382,6 +6698,119 @@ components:
       - msg
       - type
       title: ValidationError
+    VectorDocument:
+      properties:
+        id:
+          type: string
+          maxLength: 200
+          minLength: 1
+          title: Id
+          description: 调用方提供的稳定记录 ID。
+        content:
+          type: string
+          maxLength: 6000
+          minLength: 1
+          title: Content
+          description: 调用方已切分好的单条文本片段；不得超过集合的 chunk_size。
+        metadata:
+          additionalProperties: true
+          type: object
+          title: Metadata
+          description: 仅属于当前向量记录的 JSON 元数据，可用于查询过滤。
+        title:
+          anyOf:
+          - type: string
+            maxLength: 500
+          - type: 'null'
+          title: Title
+          description: 可选的来源标题。
+      type: object
+      required:
+      - id
+      - content
+      title: VectorDocument
+      description: 一条调用方已完成切分的向量记录，不代表完整原始文档。
+    VectorResponse:
+      properties:
+        id:
+          type: string
+          format: uuid
+          title: Id
+          description: 该条切片向量的稳定 ID，可用于查看、修改或删除。
+        document_id:
+          type: string
+          format: uuid
+          title: Document Id
+          description: 来源文档容器 ID，用于追溯原始内容。
+        external_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: External Id
+          description: 调用方提供的来源 ID；同一旧文档的切片可能相同。
+        title:
+          type: string
+          title: Title
+          description: 来源记录标题。
+        content:
+          type: string
+          title: Content
+          description: 该条向量对应的文本切片，不包含向量数组。
+        metadata:
+          additionalProperties: true
+          type: object
+          title: Metadata
+          description: 该切片的 metadata 对象。
+        sequence:
+          type: integer
+          title: Sequence
+          description: 该切片在来源文档中的从零开始序号。
+        created_by_user_id:
+          type: string
+          format: uuid
+          title: Created By User Id
+          description: 创建来源记录的用户 ID。
+        created_at:
+          type: string
+          title: Created At
+          description: 切片创建时间，ISO 8601 格式。
+        updated_at:
+          type: string
+          title: Updated At
+          description: 该条切片最后修改时间，ISO 8601 格式。
+      type: object
+      required:
+      - id
+      - document_id
+      - external_id
+      - title
+      - content
+      - metadata
+      - sequence
+      - created_by_user_id
+      - created_at
+      - updated_at
+      title: VectorResponse
+      description: 单条向量切片的管理视图，不包含高维 embedding 数组。
+    VectorUpdateRequest:
+      properties:
+        content:
+          type: string
+          maxLength: 6000
+          minLength: 1
+          title: Content
+          description: 单条切片文本。
+        metadata:
+          additionalProperties: true
+          type: object
+          title: Metadata
+          description: 替换该条记录的 Metadata JSON 对象。
+      type: object
+      required:
+      - content
+      - metadata
+      title: VectorUpdateRequest
+      description: 可编辑字段；正文变化会重新计算 Embedding 并计入用量。
     app__services__asr__admin_api__ProviderResponse:
       properties:
         id:
@@ -5398,6 +6827,9 @@ components:
           type: string
           const: volc
           title: Route Prefix
+        model_name:
+          type: string
+          title: Model Name
         resource_id:
           type: string
           title: Resource Id
@@ -5431,6 +6863,7 @@ components:
       - name
       - supplier_name
       - route_prefix
+      - model_name
       - resource_id
       - file_transcription_url
       - realtime_url
@@ -5439,6 +6872,243 @@ components:
       - api_key
       - created_at
       title: ProviderResponse
+    app__services__embedding__admin_api__CreateProviderRequest:
+      properties:
+        name:
+          type: string
+          maxLength: 100
+          minLength: 1
+          title: Name
+        supplier_name:
+          type: string
+          maxLength: 100
+          minLength: 1
+          title: Supplier Name
+        route_prefix:
+          anyOf:
+          - type: string
+            maxLength: 64
+          - type: 'null'
+          title: Route Prefix
+        base_url:
+          type: string
+          maxLength: 500
+          title: Base Url
+        api_key:
+          type: string
+          maxLength: 4000
+          minLength: 1
+          title: Api Key
+      type: object
+      required:
+      - name
+      - supplier_name
+      - base_url
+      - api_key
+      title: CreateProviderRequest
+    app__services__embedding__admin_api__ProviderResponse:
+      properties:
+        id:
+          type: string
+          format: uuid
+          title: Id
+        name:
+          type: string
+          title: Name
+        supplier_name:
+          type: string
+          title: Supplier Name
+        route_prefix:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Route Prefix
+        base_url:
+          type: string
+          title: Base Url
+        status:
+          type: string
+          enum:
+          - active
+          - disabled
+          title: Status
+        priority:
+          type: integer
+          title: Priority
+        api_key_configured:
+          type: boolean
+          title: Api Key Configured
+        api_key:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Api Key
+        last_tested_at:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Last Tested At
+        last_test_success:
+          anyOf:
+          - type: boolean
+          - type: 'null'
+          title: Last Test Success
+        last_test_message:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Last Test Message
+      type: object
+      required:
+      - id
+      - name
+      - supplier_name
+      - route_prefix
+      - base_url
+      - status
+      - priority
+      - api_key_configured
+      - api_key
+      - last_tested_at
+      - last_test_success
+      - last_test_message
+      title: ProviderResponse
+    app__services__embedding__admin_api__ProviderTestRequest:
+      properties:
+        model:
+          type: string
+          maxLength: 200
+          minLength: 1
+          title: Model
+      type: object
+      required:
+      - model
+      title: ProviderTestRequest
+    app__services__embedding__admin_api__ProviderTestResponse:
+      properties:
+        success:
+          type: boolean
+          title: Success
+        message:
+          type: string
+          title: Message
+      type: object
+      required:
+      - success
+      - message
+      title: ProviderTestResponse
+    app__services__embedding__admin_api__PublicRouteGroupResponse:
+      properties:
+        prefix:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Prefix
+        suppliers:
+          items:
+            type: string
+          type: array
+          title: Suppliers
+        connection_count:
+          type: integer
+          title: Connection Count
+      type: object
+      required:
+      - prefix
+      - suppliers
+      - connection_count
+      title: PublicRouteGroupResponse
+    app__services__embedding__admin_api__UpdateProviderRequest:
+      properties:
+        name:
+          anyOf:
+          - type: string
+            maxLength: 100
+            minLength: 1
+          - type: 'null'
+          title: Name
+        supplier_name:
+          anyOf:
+          - type: string
+            maxLength: 100
+            minLength: 1
+          - type: 'null'
+          title: Supplier Name
+        route_prefix:
+          anyOf:
+          - type: string
+            maxLength: 64
+          - type: 'null'
+          title: Route Prefix
+        base_url:
+          anyOf:
+          - type: string
+            maxLength: 500
+          - type: 'null'
+          title: Base Url
+        api_key:
+          anyOf:
+          - type: string
+            maxLength: 4000
+          - type: 'null'
+          title: Api Key
+        status:
+          anyOf:
+          - type: string
+            enum:
+            - active
+            - disabled
+          - type: 'null'
+          title: Status
+        priority:
+          anyOf:
+          - type: integer
+            maximum: 1000000.0
+            minimum: 0.0
+          - type: 'null'
+          title: Priority
+      type: object
+      title: UpdateProviderRequest
+    app__services__llm__admin_api__CreateProviderRequest:
+      properties:
+        name:
+          type: string
+          maxLength: 100
+          minLength: 1
+          title: Name
+          description: 管理员自定义的供应商名称。
+        supplier_name:
+          anyOf:
+          - type: string
+            maxLength: 100
+            minLength: 1
+          - type: 'null'
+          title: Supplier Name
+          description: 面向用户展示的供应商名称；省略时沿用连接名称。
+        route_prefix:
+          anyOf:
+          - type: string
+            maxLength: 64
+          - type: 'null'
+          title: Route Prefix
+          description: 可选模型路由前缀，例如 volc；留空表示只参与默认池。
+        base_url:
+          type: string
+          maxLength: 500
+          title: Base Url
+          description: OpenAI 兼容 API Base URL，通常以 /v1 结尾。
+        api_key:
+          type: string
+          maxLength: 4000
+          minLength: 1
+          title: Api Key
+          description: 上游供应商 API Key，仅写入。
+      type: object
+      required:
+      - name
+      - base_url
+      - api_key
+      title: CreateProviderRequest
     app__services__llm__admin_api__ProviderResponse:
       properties:
         id:
@@ -5512,6 +7182,115 @@ components:
       - last_test_message
       title: ProviderResponse
       description: 管理员连接响应；包含仅管理员可见的解密 API Key，不返回数据库密文。
+    app__services__llm__admin_api__ProviderTestRequest:
+      properties:
+        model:
+          type: string
+          maxLength: 200
+          minLength: 1
+          title: Model
+          description: 用于该连接测试的上游模型名。
+      type: object
+      required:
+      - model
+      title: ProviderTestRequest
+    app__services__llm__admin_api__ProviderTestResponse:
+      properties:
+        success:
+          type: boolean
+          title: Success
+        message:
+          type: string
+          title: Message
+        tested_at:
+          type: string
+          title: Tested At
+      type: object
+      required:
+      - success
+      - message
+      - tested_at
+      title: ProviderTestResponse
+      description: 供应商连通性测试结果。
+    app__services__llm__admin_api__PublicRouteGroupResponse:
+      properties:
+        prefix:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Prefix
+          description: null 表示默认池；非空值可作为 model 前缀。
+        suppliers:
+          items:
+            type: string
+          type: array
+          title: Suppliers
+          description: 去重后的供应商显示名称。
+        connection_count:
+          type: integer
+          title: Connection Count
+          description: 当前启用的上游连接数量。
+      type: object
+      required:
+      - prefix
+      - suppliers
+      - connection_count
+      title: PublicRouteGroupResponse
+      description: 调用方可用的供应商名称和模型路由前缀摘要。
+    app__services__llm__admin_api__UpdateProviderRequest:
+      properties:
+        name:
+          anyOf:
+          - type: string
+            maxLength: 100
+            minLength: 1
+          - type: 'null'
+          title: Name
+        supplier_name:
+          anyOf:
+          - type: string
+            maxLength: 100
+            minLength: 1
+          - type: 'null'
+          title: Supplier Name
+        route_prefix:
+          anyOf:
+          - type: string
+            maxLength: 64
+          - type: 'null'
+          title: Route Prefix
+          description: 空字符串清除前缀。
+        base_url:
+          anyOf:
+          - type: string
+            maxLength: 500
+          - type: 'null'
+          title: Base Url
+        api_key:
+          anyOf:
+          - type: string
+            maxLength: 4000
+          - type: 'null'
+          title: Api Key
+          description: 留空表示不轮换密钥。
+        status:
+          anyOf:
+          - type: string
+            enum:
+            - active
+            - disabled
+          - type: 'null'
+          title: Status
+        priority:
+          anyOf:
+          - type: integer
+            maximum: 1000000.0
+            minimum: 0.0
+          - type: 'null'
+          title: Priority
+          description: 越小越优先。
+      type: object
+      title: UpdateProviderRequest
   securitySchemes:
     HTTPBearer:
       type: http

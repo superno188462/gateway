@@ -53,14 +53,14 @@ export function ServiceProjectsPage({ serviceCode = "mock-llm-v1", serviceName =
                 <p>{project.description || "暂无项目描述"}</p>
                 <span className="member-empty">{project.owner_id === user?.id ? "我创建的项目" : "我可访问的项目"} · {project.visibility === "public" ? "公开" : "私有"}</span>
               </div>
-              <Link className="primary-button project-open-button" to={`/projects/${project.id}`}>打开项目</Link>
+              <Link className="primary-button project-open-button" to={serviceCode === "rag-v1" ? `/projects/${project.id}/rag` : `/projects/${project.id}`}>{serviceCode === "rag-v1" ? "管理向量数据库" : "打开项目"}</Link>
             </div>
-            <div className="service-project-summary-grid">
+            {serviceCode === "rag-v1" ? <p className="page-description">向量集合管理与相似度检索服务已开通。</p> : <div className="service-project-summary-grid">
               <span>项目月额度<strong>{project.monthly_token_limit === null ? "不适用" : `${formatTokens(project.monthly_token_limit)} ${serviceName === "ASR" ? "秒" : "tokens"}`}</strong></span>
               <span>本月已用<strong>{formatTokens(project.tokens_used)} {serviceName === "ASR" ? "秒" : "tokens"}</strong></span>
               <span>处理中预留<strong>{formatTokens(project.tokens_reserved)} {serviceName === "ASR" ? "秒" : "tokens"}</strong></span>
               <span>服务状态<strong>{project.service_status === "active" ? "运行中" : "已暂停"}</strong></span>
-            </div>
+            </div>}
           </article>
         ))}
       </div>

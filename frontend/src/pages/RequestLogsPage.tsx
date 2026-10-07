@@ -36,8 +36,15 @@ function actorLabel(log: RequestLog): string {
   return `${log.actor_username ?? "用户已删除"} · ${log.actor_user_id}`;
 }
 
-function keyLabel(log: RequestLog): string {
-  return log.api_key_id ?? (log.event_type === "service_call" ? "未认证 Key" : "-");
+function projectLabel(log: RequestLog): string {
+  if (log.project_name) return log.project_name;
+  if (log.project_id) return "已删除项目";
+  return log.event_type === "project_operation" ? "平台管理" : "未关联项目";
+}
+
+function eventLabel(log: RequestLog): string {
+  if (log.event_type === "service_call") return log.project_id ? "项目业务" : "服务调用";
+  return log.project_id ? "项目操作" : "平台操作";
 }
 
 function errorMessage(reason: unknown): string {
@@ -186,8 +193,8 @@ export function RequestLogsPage() {
         {loading && logs.length === 0 ? <div className="empty-state">正在加载操作日志…</div> : logs.length === 0 ? <div className="empty-state">当前筛选范围没有操作事件。</div> : (
           <div className="request-log-table-wrap">
             <table className={`request-log-table${isAdmin ? " request-log-table-admin" : ""}`}>
-              <thead><tr><th>时间（北京时间）</th>{isAdmin && <th>项目</th>}<th>Trace ID</th><th>类型</th><th>服务 / 操作</th><th>成员</th><th>API Key ID</th><th>状态</th><th>错误诊断</th><th>结果说明</th><th>耗时</th></tr></thead>
-              <tbody>{logs.map((log) => <tr className="request-log-row" key={log.request_id} onClick={() => void showDetails(log)} tabIndex={0} onKeyDown={(event) => { if (event.key === "Enter") void showDetails(log); }}><td>{formatBeijingTime(log.created_at)}</td>{isAdmin && <td>{log.project_name ?? (log.project_id ? "已删除项目" : "未认证请求")}</td>}<td>{isAdmin ? <Link className="log-trace-link" onClick={(event) => event.stopPropagation()} title={log.trace_id} to={`/admin/system-logs?trace_id=${encodeURIComponent(log.trace_id)}`}><code>{log.trace_id}</code><span>查看技术日志 →</span></Link> : <code title={log.trace_id}>{log.trace_id}</code>}</td><td>{log.event_type === "project_operation" ? "项目操作" : "服务调用"}</td><td><code>{log.event_type === "project_operation" ? "项目管理" : log.service_code}</code></td><td>{actorLabel(log)}</td><td><code>{keyLabel(log)}</code></td><td><span className={`request-status request-status-${log.status}`}>{readableStatus(log.status)}</span></td><td>{log.error_code ? <><code className="log-error-code">{log.error_code}</code><span className="log-error-message">{log.error_message ?? "操作失败"}</span></> : "-"}</td><td>{log.description ?? "-"}</td><td>{formatTokens(log.latency_ms)} ms</td></tr>)}</tbody>
+              <thead><tr><th>时间（北京时间）</th>{isAdmin && <th>项目</th>}<th>Trace ID</th><th>类型</th><th>服务 / 操作</th><th>成员</th><th>状态</th><th>错误诊断</th><th>结果说明</th><th>耗时</th></tr></thead>
+              <tbody>{logs.map((log) => <tr className="request-log-row" key={log.request_id} onClick={() => void showDetails(log)} tabIndex={0} onKeyDown={(event) => { if (event.key === "Enter") void showDetails(log); }}><td>{formatBeijingTime(log.created_at)}</td>{isAdmin && <td>{projectLabel(log)}</td>}<td>{isAdmin ? <Link className="log-trace-link" onClick={(event) => event.stopPropagation()} title={log.trace_id} to={`/admin/system-logs?trace_id=${encodeURIComponent(log.trace_id)}`}><code>{log.trace_id}</code><span>查看技术日志 →</span></Link> : <code title={log.trace_id}>{log.trace_id}</code>}</td><td>{eventLabel(log)}</td><td><code>{log.event_type === "project_operation" && log.project_id ? "项目管理" : log.service_code}</code></td><td>{actorLabel(log)}</td><td><span className={`request-status request-status-${log.status}`}>{readableStatus(log.status)}</span></td><td>{log.error_code ? <><code className="log-error-code">{log.error_code}</code><span className="log-error-message">{log.error_message ?? "操作失败"}</span></> : "-"}</td><td>{log.description ?? "-"}</td><td>{formatTokens(log.latency_ms)} ms</td></tr>)}</tbody>
             </table>
           </div>
         )}
@@ -197,7 +204,7 @@ export function RequestLogsPage() {
       {selectedLog && (
         <aside className="project-detail-panel request-log-detail" aria-label="操作日志详情">
           <div className="usage-panel-heading"><div><h3>操作详情</h3><p>{selectedLog.request_id}</p></div><button className="secondary-button" onClick={() => setSelectedLog(null)} type="button">关闭</button></div>
-          <dl><dt>项目</dt><dd>{selectedLog.project_name ?? (selectedLog.project_id ? "已删除项目" : "未认证请求")} {selectedLog.project_id && `· ${selectedLog.project_id}`}</dd><dt>类型</dt><dd>{selectedLog.event_type === "project_operation" ? "项目操作" : "服务调用"}</dd><dt>成员</dt><dd>{actorLabel(selectedLog)}</dd><dt>API Key ID</dt><dd>{keyLabel(selectedLog)}</dd><dt>服务 / 操作</dt><dd>{selectedLog.event_type === "project_operation" ? "项目管理" : selectedLog.service_code}</dd><dt>操作结果</dt><dd>{readableStatus(selectedLog.status)}</dd><dt>错误码</dt><dd>{selectedLog.error_code ?? "-"}</dd><dt>原因</dt><dd>{selectedLog.error_message ?? (selectedLog.status === "succeeded" ? "-" : "暂未提供更多信息")}</dd><dt>结果说明</dt><dd>{selectedLog.description ?? "-"}</dd><dt>耗时</dt><dd>{formatTokens(selectedLog.latency_ms)} ms</dd><dt>Request ID / Trace ID</dt><dd>{selectedLog.request_id} / {selectedLog.trace_id}</dd><dt>时间（北京时间）</dt><dd>{formatBeijingTime(selectedLog.created_at)}</dd></dl>
+          <dl><dt>项目</dt><dd>{projectLabel(selectedLog)} {selectedLog.project_id && `· ${selectedLog.project_id}`}</dd><dt>类型</dt><dd>{eventLabel(selectedLog)}</dd><dt>成员</dt><dd>{actorLabel(selectedLog)}</dd><dt>服务 / 操作</dt><dd>{selectedLog.event_type === "project_operation" && selectedLog.project_id ? "项目管理" : selectedLog.service_code}</dd><dt>操作结果</dt><dd>{readableStatus(selectedLog.status)}</dd><dt>错误码</dt><dd>{selectedLog.error_code ?? "-"}</dd><dt>原因</dt><dd>{selectedLog.error_message ?? (selectedLog.status === "succeeded" ? "-" : "暂未提供更多信息")}</dd><dt>结果说明</dt><dd>{selectedLog.description ?? "-"}</dd><dt>耗时</dt><dd>{formatTokens(selectedLog.latency_ms)} ms</dd><dt>Request ID / Trace ID</dt><dd>{selectedLog.request_id} / {selectedLog.trace_id}</dd><dt>时间（北京时间）</dt><dd>{formatBeijingTime(selectedLog.created_at)}</dd></dl>
           {isAdmin && <Link className="secondary-button log-correlation-link" to={`/admin/system-logs?trace_id=${encodeURIComponent(selectedLog.trace_id)}`}>查看关联技术日志 →</Link>}
           <p className="verification-note">操作日志包含项目管理事件和服务调用结果；管理员可在技术日志中按 Trace ID 查看认证、额度、路由和上游诊断。不会记录提示词、回复正文或密钥。</p>
         </aside>

@@ -26,6 +26,11 @@ from app.service_management.application import ProjectServiceManagement
 from app.services.asr.application import AsrGatewayService
 from app.services.asr.catalog import ASR_SERVICE
 from app.services.asr.configuration import AsrConfigurationService
+from app.services.embedding.application import EmbeddingGatewayService
+from app.services.embedding.catalog import EMBEDDING_SERVICE, RAG_SERVICE
+from app.services.embedding.configuration import EmbeddingConfigurationService
+from app.services.embedding.provider import ConfiguredEmbeddingProvider
+from app.services.embedding.rag import RagKnowledgeService
 from app.services.llm.application import LlmGatewayService
 from app.services.llm.catalog import LLM_SERVICE
 from app.services.llm.configuration import LlmConfigurationService
@@ -60,6 +65,9 @@ class AppContainer:
     service_management: ProjectServiceManagement | None
     llm_gateway_service: LlmGatewayService | None
     llm_configuration_service: LlmConfigurationService | None
+    embedding_configuration_service: EmbeddingConfigurationService | None
+    embedding_gateway_service: EmbeddingGatewayService | None
+    embedding_rag_service: RagKnowledgeService | None
     asr_configuration_service: AsrConfigurationService | None
     asr_gateway_service: AsrGatewayService | None
     request_log_service: RequestLogService | None
@@ -95,6 +103,9 @@ class AppContainer:
                 service_management=None,
                 llm_gateway_service=None,
                 llm_configuration_service=None,
+                embedding_configuration_service=None,
+                embedding_gateway_service=None,
+                embedding_rag_service=None,
                 asr_configuration_service=None,
                 asr_gateway_service=None,
                 request_log_service=None,
@@ -125,6 +136,12 @@ class AppContainer:
             if settings.llm_provider_secret_key is not None
             else None,
         )
+        embedding_configuration_service = EmbeddingConfigurationService(
+            session_factory,
+            ProviderSecretCipher(settings.llm_provider_secret_key.get_secret_value())
+            if settings.llm_provider_secret_key is not None
+            else None,
+        )
         asr_configuration_service = (
             AsrConfigurationService(
                 session_factory,
@@ -135,6 +152,11 @@ class AppContainer:
         )
         request_log_service = RequestLogService(session_factory)
         request_recorder = GatewayRequestRecorder(session_factory)
+        embedding_gateway_service = EmbeddingGatewayService(
+            session_factory,
+            ConfiguredEmbeddingProvider(embedding_configuration_service, http_client),
+            request_recorder,
+        )
 
         async def llm_catalog_provider() -> tuple[ServiceCatalogItem, ...]:
             """把当前启用的公开模型名接入通用服务目录。"""
@@ -146,6 +168,13 @@ class AppContainer:
             return (
                 ServiceCatalogItem(LLM_SERVICE.code, LLM_SERVICE.name, models),
                 ServiceCatalogItem(
+                    EMBEDDING_SERVICE.code,
+                    EMBEDDING_SERVICE.name,
+                    await embedding_configuration_service.active_model_codes()
+                    if embedding_configuration_service is not None
+                    else (),
+                ),
+                ServiceCatalogItem(
                     ASR_SERVICE.code,
                     ASR_SERVICE.name,
                     await asr_configuration_service.active_models()
@@ -154,6 +183,7 @@ class AppContainer:
                     quota_unit=ASR_SERVICE.quota_unit,
                 ),
                 PROJECT_CONTEXT_SERVICE,
+                RAG_SERVICE,
             )
 
         return cls(
@@ -176,6 +206,7 @@ class AppContainer:
                 {
                     "mock-llm-v1": settings.default_llm_monthly_token_limit,
                     "asr-v1": settings.default_asr_monthly_quota_seconds,
+                    "embedding-v1": settings.default_embedding_monthly_token_limit,
                 },
             ),
             project_service=ProjectService(session_factory),
@@ -197,6 +228,13 @@ class AppContainer:
                 request_recorder,
             ),
             llm_configuration_service=llm_configuration_service,
+            embedding_configuration_service=embedding_configuration_service,
+            embedding_gateway_service=embedding_gateway_service,
+            embedding_rag_service=RagKnowledgeService(
+                session_factory,
+                embedding_gateway_service,
+                request_recorder,
+            ),
             asr_configuration_service=asr_configuration_service,
             asr_gateway_service=(
                 AsrGatewayService(
@@ -211,7 +249,6 @@ class AppContainer:
             request_recorder=request_recorder,
             technical_log_service=TechnicalLogService(settings.log_file_path),
             log_retention_task=None,
-            context_cleanup_task=None,
             http_client=http_client,
         )
 
@@ -338,6 +375,36 @@ def get_llm_configuration_service(request: Request) -> LlmConfigurationService:
                 "message": "请先配置 LLM_PROVIDER_SECRET_KEY",
             },
         )
+    return service
+
+
+def get_embedding_configuration_service(request: Request) -> EmbeddingConfigurationService:
+    from fastapi import HTTPException, status
+
+    container = get_container(request)
+    service = container.embedding_configuration_service
+    if service is None or container.settings.llm_provider_secret_key is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "code": "embedding_provider_config_unavailable",
+                "message": "请先配置 LLM_PROVIDER_SECRET_KEY",
+            },
+        )
+    return service
+
+
+def get_embedding_gateway_service(request: Request) -> EmbeddingGatewayService:
+    service = get_container(request).embedding_gateway_service
+    if service is None:
+        raise RuntimeError("Embedding gateway service unavailable")
+    return service
+
+
+def get_embedding_rag_service(request: Request) -> RagKnowledgeService:
+    service = get_container(request).embedding_rag_service
+    if service is None:
+        raise RuntimeError("RAG knowledge service unavailable")
     return service
 
 

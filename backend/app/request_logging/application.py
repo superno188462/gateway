@@ -35,6 +35,9 @@ class GatewayRequestRecorder:
         description: str,
         api_key_id: UUID | None = None,
         latency_ms: int = 0,
+        status: Literal["succeeded", "failed"] = "succeeded",
+        error_code: str | None = None,
+        error_message: str | None = None,
     ) -> None:
         """Persist a successful project-management operation without storing content."""
         async with self._session_factory.begin() as session:
@@ -48,10 +51,48 @@ class GatewayRequestRecorder:
                     project_id=project_id,
                     api_key_id=api_key_id,
                     service_code="project",
-                    status="succeeded",
+                    status=status,
                     audit_result="allowed",
-                    audit_steps={"operation": {"result": "succeeded", "name": operation}},
+                    audit_steps={"operation": {"result": status, "name": operation}},
                     description=description[:1000],
+                    error_code=error_code,
+                    error_message=error_message[:500] if error_message else None,
+                    latency_ms=latency_ms,
+                    finished_at=datetime.now(UTC),
+                )
+            )
+
+    async def record_admin_operation(
+        self,
+        *,
+        trace_id: str,
+        actor_user_id: UUID,
+        actor_username: str,
+        operation: str,
+        description: str,
+        status: Literal["succeeded", "failed"] = "succeeded",
+        error_code: str | None = None,
+        error_message: str | None = None,
+        latency_ms: int = 0,
+    ) -> None:
+        """Record a global administrator mutation or provider test without secrets."""
+        async with self._session_factory.begin() as session:
+            session.add(
+                GatewayRequest(
+                    request_id=f"op_{uuid4().hex}",
+                    trace_id=trace_id,
+                    event_type="project_operation",
+                    actor_user_id=actor_user_id,
+                    actor_username=actor_username,
+                    project_id=None,
+                    api_key_id=None,
+                    service_code="embedding-admin",
+                    status=status,
+                    audit_result="allowed",
+                    audit_steps={"operation": {"result": status, "name": operation}},
+                    description=description[:1000],
+                    error_code=error_code,
+                    error_message=error_message[:500] if error_message else None,
                     latency_ms=latency_ms,
                     finished_at=datetime.now(UTC),
                 )
@@ -62,7 +103,7 @@ class GatewayRequestRecorder:
         *,
         request_id: str,
         project_id: UUID,
-        api_key_id: UUID,
+        api_key_id: UUID | None,
         service_code: str,
         description: str | None = None,
         actor_user_id: UUID | None = None,
@@ -87,7 +128,7 @@ class GatewayRequestRecorder:
         *,
         request_id: str,
         project_id: UUID,
-        api_key_id: UUID,
+        api_key_id: UUID | None,
         service_code: str,
         description: str | None = None,
         actor_user_id: UUID | None = None,

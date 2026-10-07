@@ -36,6 +36,7 @@ async def test_llm_mock_access_chat_stream_quota_and_upgrade(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     caplog.set_level(logging.INFO, logger="gateway.service.llm")
+    caplog.set_level(logging.INFO, logger="gateway.auth")
     engine = create_async_engine(database_url())
     factory = async_sessionmaker(engine, expire_on_commit=False)
     owner_id, project_id, second_project_id = uuid4(), uuid4(), uuid4()
@@ -305,9 +306,7 @@ async def test_llm_mock_access_chat_stream_quota_and_upgrade(
             streamed_request_id = streaming.headers["x-request-id"]
             async with factory.begin() as session:
                 streamed_record = await session.scalar(
-                    select(GatewayRequest).where(
-                        GatewayRequest.request_id == streamed_request_id
-                    )
+                    select(GatewayRequest).where(GatewayRequest.request_id == streamed_request_id)
                 )
                 assert streamed_record is not None
                 assert streamed_record.status == "succeeded"

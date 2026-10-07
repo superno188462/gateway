@@ -263,10 +263,24 @@ export function ProjectDetailPage() {
     }
   }
 
+  async function applyRagService() {
+    if (!token || !projectId || projectServices.some((item) => item.service_code === "rag-v1")) return;
+    setServiceError(null);
+    setServiceSuccess(null);
+    try {
+      const subscription = await apiClient.applyProjectService(token, projectId, { service_code: "rag-v1" });
+      setProjectServices((current) => [...current, subscription]);
+      setServiceSuccess("向量数据库服务已开通。");
+    } catch (reason) {
+      setServiceError(errorMessage(reason, "向量数据库服务申请失败，请重试。"));
+    }
+  }
+
   const canManage = project?.owner_id === user?.id;
   const canViewApiKeys = canManage || members.some(
     (member) => member.user_id === user?.id && member.role === "editor",
   );
+  const canViewRag = canManage || members.some((member) => member.user_id === user?.id);
   return (
     <section className="page-content" aria-labelledby="project-detail-title">
       <Link className="back-link" to="/projects">← 返回项目列表</Link>
@@ -327,6 +341,23 @@ export function ProjectDetailPage() {
               </Link>
               <span>提示词模板、短期/长期记忆与用户画像都按项目隔离。</span>
             </div>
+          )}
+          {canViewRag && (
+            <div className="project-detail-shortcuts">
+              <Link className="secondary-button project-key-link" to={`/projects/${project.id}/rag`}>
+                管理向量数据库 <span aria-hidden="true">→</span>
+              </Link>
+              <span>添加文本、生成向量并测试项目内的相似度检索。</span>
+            </div>
+          )}
+          {canManage && !projectServices.some((item) => item.service_code === "rag-v1") && (
+            <section className="project-detail-panel service-allocation-panel">
+              <div className="service-allocation-heading">
+                <div><h3>向量数据库服务</h3><p>开通项目隔离的向量集合；向量化和检索消耗独立的 Embedding token 额度。</p></div>
+                <button className="primary-button" onClick={() => void applyRagService()} type="button">申请并开通</button>
+              </div>
+              {serviceError && <p className="form-error" role="alert">{serviceError}</p>}
+            </section>
           )}
           {canManage && !projectServices.some((item) => item.service_code === "project-context-v1") && (
             <section className="project-detail-panel service-allocation-panel">

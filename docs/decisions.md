@@ -130,3 +130,13 @@
 - 计量：ASR 按识别音频秒数执行用户总额度与项目额度的预留和结算，不消耗 LLM token 额度。
 - 实时协议：网关接受 JSON 控制消息及 16 kHz 单声道 s16le PCM 二进制帧，将火山上游事件转换为统一 partial/final/error 事件。final 包含稳定 `utterance_id`，重复投递按 ID 去重；静音判停完成语句不结束整个客户端 WebSocket，`end` 只结束完整音频流。
 - 隐私：日志保留 Trace ID、成员、状态、错误分类和耗时，不记录 API Key、音频或转写正文。
+
+## D-018：Embedding 与 RAG 知识库首版
+
+- 状态：已决定；A9 后端首版实现中。
+- Embedding：管理员上游连接配置遵循 LLM 的 OpenAI 兼容 Base URL、加密 API Key、模型前缀路由、同组优先级故障切换；调用方使用项目 API Key 调用 `/v1/embeddings`。首批仅实现文本模态，独立 `embedding-v1` 按上游 token usage 结算。
+- 多模态：图像、视频嵌入能力由各上游模型和协议决定，不能假定任意 OpenAI 兼容 Embedding API 都接收媒体。后续通过显式模型能力声明和供应商适配器扩展；媒体上传及原文件对象存储待选定供应商后设计。PostgreSQL 中预留 modality、model 和 dimensions 字段。
+- RAG：使用现有 PostgreSQL 安装 pgvector 扩展，项目级隔离知识库、文档、切片、元数据和向量。首版知识库固定 Embedding model，首次嵌入确定维度，切换维度需要新建知识库并重嵌。服务返回 top-k 片段，由业务调用方决定如何构造 LLM Prompt，不在 RAG 服务里重复调用生成模型。
+- 计量和门禁：Embedding 服务按 tokens 使用独立用户/月额度及项目分配额度。RAG 知识库是单独服务订阅；写入和检索内部消耗的模型 token 记入 `embedding-v1`，避免再重复收取 RAG tokens。
+- 检索：首版使用 pgvector cosine distance 精确检索，知识规模和维度模式稳定后再按数据规模增加 HNSW/IVFFlat 索引并执行召回验证。
+- 隐私：通用日志仅记录项目、API Key 成员归属、模型、token 用量、Trace ID、结果及错误，不记录输入正文、原始媒体或向量内容。RAG 知识正文按项目业务数据保存在 PostgreSQL。
