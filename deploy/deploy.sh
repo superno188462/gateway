@@ -22,6 +22,6 @@ mkdir -p deploy/www
 docker compose config >/dev/null
 docker compose build --pull api frontend-assets
 docker compose run --rm frontend-assets
-docker compose run --rm api uv run alembic upgrade head
+docker compose run --rm api uv run --no-sync alembic upgrade head
 docker compose up -d --remove-orphans
 docker compose ps
