@@ -40,6 +40,9 @@ def test_committed_openapi_paths_match_generated_openapi() -> None:
     assert "patch" in generated["paths"][
         "/api/v1/rag/projects/{project_id}/knowledge-bases/{knowledge_base_id}/vectors/{vector_id}"
     ]
+    assert "patch" in generated["paths"][
+        "/api/v1/rag/projects/{project_id}/knowledge-bases/{knowledge_base_id}"
+    ]
 
     for path, operations in committed["paths"].items():
         methods = {key for key in operations if key != "parameters"}

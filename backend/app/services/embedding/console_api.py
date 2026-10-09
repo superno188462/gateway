@@ -16,6 +16,7 @@ from app.services.embedding.rag_api import (
     DocumentResponse,
     KnowledgeBaseCreateRequest,
     KnowledgeBaseResponse,
+    KnowledgeBaseSettingsUpdateRequest,
     SearchRequest,
     VectorResponse,
     VectorUpdateRequest,
@@ -141,6 +142,46 @@ async def create_knowledge_base(
         raise _map_error(error) from error
     except Exception as error:
         await _log_operation_failure(service, actor, request, "rag.knowledge_base.create", error)
+        raise
+    return KnowledgeBaseResponse.from_entity(item)
+
+
+@router.patch(
+    "/knowledge-bases/{knowledge_base_id}",
+    response_model=KnowledgeBaseResponse,
+    summary="修改向量集合设置",
+    description=(
+        "允许修改单条记录最大字符数和模型路由前缀；模型名不可修改。"
+        "更改路由前缀不会重建已有向量，若目标上游与现有向量空间不一致，需重新写入向量。"
+    ),
+)
+async def update_knowledge_base_settings(
+    project_id: UUID,
+    knowledge_base_id: UUID,
+    payload: KnowledgeBaseSettingsUpdateRequest,
+    request: Request,
+    user: Annotated[User, Depends(get_current_user)],
+    projects: Annotated[ProjectService, Depends(get_project_service)],
+    service: Annotated[RagKnowledgeService, Depends(get_embedding_rag_service)],
+) -> KnowledgeBaseResponse:
+    actor = await _actor(project_id, user, projects, write=True)
+    try:
+        item = await service.update_knowledge_base_settings(
+            actor,
+            knowledge_base_id,
+            route_prefix=payload.route_prefix,
+            max_record_chars=payload.chunk_size,
+            trace_id=request.state.trace_id,
+        )
+    except RagError as error:
+        await _log_operation_failure(
+            service, actor, request, "rag.knowledge_base.update_settings", error
+        )
+        raise _map_error(error) from error
+    except Exception as error:
+        await _log_operation_failure(
+            service, actor, request, "rag.knowledge_base.update_settings", error
+        )
         raise
     return KnowledgeBaseResponse.from_entity(item)
 

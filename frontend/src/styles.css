@@ -407,6 +407,8 @@ h2 { font-size: 28px; letter-spacing: -.03em; }
 .rag-vector-metadata, .rag-vector-content { max-height: 240px; margin: 0; overflow: auto; padding: 10px; border-radius: 7px; background: #f1f4f8; color: #344258; font: 12px/1.55 ui-monospace, SFMono-Regular, Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
 .rag-vector-details .project-field textarea { width: 100%; padding: 12px 14px; resize: vertical; border: 1px solid #d8e0ec; border-radius: 9px; color: #27354a; background: #fff; font: inherit; }
 .rag-vector-edit-actions, .rag-vector-actions { display: flex; gap: 8px; align-items: flex-start; }
+.rag-settings-form { display: grid; gap: 14px; margin-top: 16px; padding: 16px; border: 1px solid #e5ebf2; border-radius: 9px; background: #fbfcfe; }
+.rag-settings-form h4 { margin: 0; }
 .rag-document-grid form { display: grid; align-content: start; gap: 13px; }
 .rag-document-grid textarea { width: 100%; padding: 12px 14px; resize: vertical; border: 1px solid #d8e0ec; border-radius: 9px; color: #27354a; background: #fff; font: inherit; }
 .rag-search-form { display: flex; gap: 10px; margin: 15px 0; }

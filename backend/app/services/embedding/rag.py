@@ -1,6 +1,7 @@
 """项目隔离的文本知识库、切片向量化和 pgvector 相似度检索。"""
 
 import logging
+import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Literal, cast
@@ -114,6 +115,68 @@ class RagKnowledgeService:
             base_id = base.id
         await self._operation(key, trace_id, "rag.knowledge_base.create", "创建 RAG 知识库")
         return await self.get_knowledge_base(key.project_id, base_id)
+
+    async def update_knowledge_base_settings(
+        self,
+        key: VerifiedApiKey,
+        base_id: UUID,
+        *,
+        route_prefix: str | None,
+        max_record_chars: int,
+        trace_id: str,
+    ) -> RagKnowledgeBase:
+        """修改集合记录长度上限和模型路由前缀，不更换模型名或重嵌已有记录。
+
+        ``route_prefix`` 为空时恢复自动路由；切换路由只影响之后生成的查询/向量，
+        调用方必须确认既有向量仍与目标上游兼容，或自行重建向量。
+        """
+        await self._require_enabled(key.project_id)
+        normalized_prefix: str | None = None
+        if route_prefix is not None and route_prefix.strip():
+            normalized_prefix = route_prefix.strip().lower()
+            if not re.fullmatch(r"[a-z0-9._-]{1,64}", normalized_prefix):
+                raise RagError("invalid_route_prefix", "模型路由前缀格式不合法", 422)
+        if not 100 <= max_record_chars <= 6000:
+            raise RagError("invalid_record_limit", "单条记录最大字符数必须在 100 到 6000 之间", 422)
+
+        async with self._session_factory.begin() as session:
+            base = await session.scalar(
+                select(RagKnowledgeBase)
+                .where(
+                    RagKnowledgeBase.id == base_id,
+                    RagKnowledgeBase.project_id == key.project_id,
+                )
+                .with_for_update()
+            )
+            if base is None:
+                raise RagError("knowledge_base_not_found", "知识库不存在", 404)
+            base.embedding_model = self._model_with_route_prefix(
+                base.embedding_model, normalized_prefix
+            )
+            base.chunk_size = max_record_chars
+            # Keep the legacy document-chunking path progressing sensibly if
+            # its hidden overlap is larger than the newly selected record size.
+            base.chunk_overlap = min(base.chunk_overlap, max_record_chars // 5)
+            base.updated_at = datetime.now(UTC)
+            await session.flush()
+            await session.refresh(base)
+            updated = base
+
+        await self._operation(
+            key,
+            trace_id,
+            "rag.knowledge_base.update_settings",
+            "修改向量集合设置：单条记录长度上限和路由前缀",
+        )
+        return updated
+
+    @staticmethod
+    def _model_with_route_prefix(model: str, route_prefix: str | None) -> str:
+        """只替换第一个斜线前的路由前缀，保留原模型标识。"""
+        _existing_prefix, separator, model_name = model.partition("/")
+        if not separator:
+            model_name = model
+        return f"{route_prefix}/{model_name}" if route_prefix else model_name
 
     async def list_knowledge_bases(self, project_id: UUID) -> list[RagKnowledgeBase]:
         await self._require_enabled(project_id)

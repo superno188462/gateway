@@ -22,6 +22,7 @@ from app.services.embedding.configuration import (
 from app.services.embedding.console_api import _actor
 from app.services.embedding.provider import ConfiguredEmbeddingProvider, EmbeddingProviderError
 from app.services.embedding.rag import RagKnowledgeService, RagVectorUpsert
+from app.services.embedding.rag_api import KnowledgeBaseSettingsUpdateRequest
 
 
 class FakeConfiguration:
@@ -302,6 +303,75 @@ def test_rag_chunker_prefers_paragraph_boundaries_when_reasonable() -> None:
     chunks = RagKnowledgeService._chunk_text("第一段。\n\n第二段。", 100, 10)
 
     assert chunks == ["第一段。\n\n第二段。"]
+
+
+def test_knowledge_base_settings_only_change_route_prefix_not_model_name() -> None:
+    assert (
+        RagKnowledgeService._model_with_route_prefix("doubao-embedding-vision", "volc")
+        == "volc/doubao-embedding-vision"
+    )
+    assert (
+        RagKnowledgeService._model_with_route_prefix("volc/doubao-embedding-vision", None)
+        == "doubao-embedding-vision"
+    )
+
+    with pytest.raises(ValidationError, match="model"):
+        KnowledgeBaseSettingsUpdateRequest(
+            route_prefix="volc", chunk_size=2048, model="different-model"
+        )
+    with pytest.raises(ValidationError):
+        KnowledgeBaseSettingsUpdateRequest(route_prefix="volc", chunk_size=99)
+
+
+@pytest.mark.asyncio
+async def test_update_knowledge_base_settings_persists_prefix_and_record_limit() -> None:
+    project_id = uuid4()
+    base = SimpleNamespace(
+        id=uuid4(),
+        project_id=project_id,
+        embedding_model="doubao-embedding-vision",
+        chunk_size=1000,
+        chunk_overlap=120,
+        updated_at=None,
+    )
+    session = SimpleNamespace(
+        scalar=AsyncMock(return_value=base),
+        flush=AsyncMock(),
+        refresh=AsyncMock(),
+    )
+
+    class BeginContext:
+        async def __aenter__(self) -> SimpleNamespace:
+            return session
+
+        async def __aexit__(self, *_args: object) -> None:
+            return None
+
+    class FakeSessionFactory:
+        def begin(self) -> BeginContext:
+            return BeginContext()
+
+    service = RagKnowledgeService(  # type: ignore[arg-type]
+        FakeSessionFactory(), None, None  # type: ignore[arg-type]
+    )
+    service._require_enabled = AsyncMock()  # type: ignore[method-assign]
+    service._operation = AsyncMock()  # type: ignore[method-assign]
+    key = SimpleNamespace(project_id=project_id)
+
+    result = await service.update_knowledge_base_settings(
+        key,  # type: ignore[arg-type]
+        base.id,
+        route_prefix="Volc",
+        max_record_chars=100,
+        trace_id="trace-settings",
+    )
+
+    assert result is base
+    assert base.embedding_model == "volc/doubao-embedding-vision"
+    assert base.chunk_size == 100
+    assert base.chunk_overlap == 20
+    session.flush.assert_awaited_once()
+    service._operation.assert_awaited_once()
 
 
 def test_embedding_request_accepts_text_and_rejects_empty_input() -> None:

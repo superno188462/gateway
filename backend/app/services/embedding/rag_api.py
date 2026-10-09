@@ -5,7 +5,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.application.api_keys import ApiKeyInvalidError, ApiKeyService, VerifiedApiKey
 from app.container import (
@@ -112,6 +112,21 @@ class KnowledgeBaseResponse(BaseModel):
             vector_dimensions=item.vector_dimensions,
             created_at=item.created_at.isoformat(),
         )
+
+
+class KnowledgeBaseSettingsUpdateRequest(BaseModel):
+    """只允许更新单条记录长度上限与模型路由前缀，模型名不可修改。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    route_prefix: str | None = Field(
+        description="新的路由前缀；null 或空字符串表示自动路由。模型名保持不变。"
+    )
+    chunk_size: int = Field(
+        ge=100,
+        le=6000,
+        description="单条已切分记录的最大字符数，仅限制后续写入；不会改写已有记录。",
+    )
 
 
 class DocumentCreateRequest(BaseModel):

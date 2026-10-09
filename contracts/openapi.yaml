@@ -1918,6 +1918,48 @@ paths:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
   /api/v1/rag/projects/{project_id}/knowledge-bases/{knowledge_base_id}:
+    patch:
+      tags:
+      - RAG Console
+      summary: 修改向量集合设置
+      description: 允许修改单条记录最大字符数和模型路由前缀；模型名不可修改。更改路由前缀不会重建已有向量，若目标上游与现有向量空间不一致，需重新写入向量。
+      operationId: update_knowledge_base_settings_api_v1_rag_projects__project_id__knowledge_bases__knowledge_base_id__patch
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: project_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Project Id
+      - name: knowledge_base_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Knowledge Base Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/KnowledgeBaseSettingsUpdateRequest'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/KnowledgeBaseResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
     delete:
       tags:
       - RAG Console
@@ -4988,6 +5030,27 @@ components:
       - vector_dimensions
       - created_at
       title: KnowledgeBaseResponse
+    KnowledgeBaseSettingsUpdateRequest:
+      properties:
+        route_prefix:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Route Prefix
+          description: 新的路由前缀；null 或空字符串表示自动路由。模型名保持不变。
+        chunk_size:
+          type: integer
+          maximum: 6000.0
+          minimum: 100.0
+          title: Chunk Size
+          description: 单条已切分记录的最大字符数，仅限制后续写入；不会改写已有记录。
+      additionalProperties: false
+      type: object
+      required:
+      - route_prefix
+      - chunk_size
+      title: KnowledgeBaseSettingsUpdateRequest
+      description: 只允许更新单条记录长度上限与模型路由前缀，模型名不可修改。
     LoginRequest:
       properties:
         username:

@@ -198,6 +198,13 @@ export type RagKnowledgeBase = {
   created_at: string;
 };
 
+/** 已启用的 Embedding 模型路由前缀。 */
+export type EmbeddingRouteGroup = {
+  prefix: string | null;
+  suppliers: string[];
+  connection_count: number;
+};
+
 export type RagDocument = {
   id: string;
   external_id: string | null;
@@ -689,7 +696,9 @@ export const apiClient = {
   getRagPermissions: (token: string, projectId: string) => request<RagPermissions>(`/v1/rag/projects/${projectId}/permissions`, {}, token),
   getRagKnowledgeBases: (token: string, projectId: string) => request<RagKnowledgeBase[]>(`/v1/rag/projects/${projectId}/knowledge-bases`, {}, token),
   createRagKnowledgeBase: (token: string, projectId: string, payload: { name: string; description?: string; model: string; chunk_size: number; chunk_overlap: number }) => request<RagKnowledgeBase>(`/v1/rag/projects/${projectId}/knowledge-bases`, { method: "POST", body: JSON.stringify(payload) }, token),
+  updateRagKnowledgeBaseSettings: (token: string, projectId: string, baseId: string, payload: { route_prefix: string | null; chunk_size: number }) => request<RagKnowledgeBase>(`/v1/rag/projects/${projectId}/knowledge-bases/${baseId}`, { method: "PATCH", body: JSON.stringify(payload) }, token),
   deleteRagKnowledgeBase: (token: string, projectId: string, baseId: string) => request<void>(`/v1/rag/projects/${projectId}/knowledge-bases/${baseId}`, { method: "DELETE" }, token),
+  getEmbeddingRouteGroups: () => request<EmbeddingRouteGroup[]>("/v1/embedding/provider-catalog"),
   getRagDocuments: (token: string, projectId: string, baseId: string) => request<RagDocument[]>(`/v1/rag/projects/${projectId}/knowledge-bases/${baseId}/documents`, {}, token),
   getRagVectors: (token: string, projectId: string, baseId: string) => request<RagVector[]>(`/v1/rag/projects/${projectId}/knowledge-bases/${baseId}/vectors`, {}, token),
   updateRagVector: (token: string, projectId: string, baseId: string, vectorId: string, payload: { content: string; metadata: Record<string, unknown> }) => request<RagVector>(`/v1/rag/projects/${projectId}/knowledge-bases/${baseId}/vectors/${vectorId}`, { method: "PATCH", body: JSON.stringify(payload) }, token),
