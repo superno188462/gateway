@@ -123,6 +123,13 @@ async def create_embeddings(
             request_id,
         )
     except EmbeddingGatewayError as error:
+        logger.error(
+            "embedding_request_failed request_id=%s error_code=%s status_code=%d message=%s",
+            request_id,
+            error.code,
+            error.status_code,
+            str(error),
+        )
         return openai_error(error.status_code, error.code, str(error), error.request_id)
     except Exception:
         # 兜底收敛数据库、额度或其他未预期异常，避免 Swagger 只看到裸 500。
