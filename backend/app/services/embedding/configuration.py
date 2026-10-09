@@ -56,6 +56,7 @@ class ResolvedEmbeddingModel:
     api_key: str = field(repr=False)
     connection_name: str = ""
     supplier_name: str = ""
+    route_prefix: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -230,6 +231,7 @@ class EmbeddingConfigurationService:
                     api_key=key,
                     connection_name=row.name,
                     supplier_name=row.supplier_name,
+                    route_prefix=row.route_prefix,
                 )
             )
         return tuple(resolved)
@@ -270,18 +272,37 @@ class EmbeddingConfigurationService:
             if row is None:
                 raise EmbeddingConfigurationNotFoundError("Embedding API 不存在")
             key = self._require_cipher().decrypt(row.encrypted_api_key)
-            url = row.base_url.rstrip("/") + "/embeddings"
+            endpoint = "/embeddings/multimodal" if row.route_prefix == "volc" else "/embeddings"
+            url = row.base_url.rstrip("/") + endpoint
+            upstream_model = model
+            if row.route_prefix == "volc" and "/" in model:
+                prefix, upstream_model = model.split("/", 1)
+                if prefix.casefold() != "volc":
+                    raise EmbeddingConfigurationValidationError("测试模型前缀与连接配置不匹配")
+        if row.route_prefix == "volc":
+            request_body = {
+                "model": upstream_model,
+                "encoding_format": "float",
+                "input": [{"type": "text", "text": "gateway connectivity test"}],
+            }
+        else:
+            request_body = {"model": upstream_model, "input": "gateway connectivity test"}
         response = await client.post(
             url,
             headers={"Authorization": f"Bearer {key}"},
-            json={"model": model, "input": "gateway connectivity test"},
+            json=request_body,
         )
         response.raise_for_status()
         result = response.json()
         data = result.get("data") if isinstance(result, dict) else None
-        if not isinstance(data, list) or not data:
-            raise EmbeddingConfigurationValidationError("上游未返回 Embedding 向量")
-        embedding = data[0].get("embedding") if isinstance(data[0], dict) else None
+        if row.route_prefix == "volc" and isinstance(data, dict):
+            embedding = data.get("embedding")
+        else:
+            embedding = (
+                data[0].get("embedding")
+                if isinstance(data, list) and data and isinstance(data[0], dict)
+                else None
+            )
         if not isinstance(embedding, list) or not embedding:
             raise EmbeddingConfigurationValidationError("上游返回的 Embedding 向量无效")
         return f"连接成功，向量维度 {len(embedding)}"
@@ -293,7 +314,7 @@ class EmbeddingConfigurationService:
         prefix = value.strip().strip("/")
         if not re.fullmatch(r"[A-Za-z0-9._-]{1,64}", prefix):
             raise EmbeddingConfigurationValidationError("模型路由前缀格式不合法")
-        return prefix
+        return prefix.lower()
 
     @staticmethod
     def _normalize_url(value: str) -> str:

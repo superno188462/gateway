@@ -1,7 +1,9 @@
 """OpenAI 兼容 Embedding 传输与响应结构验证。"""
 
+import asyncio
 import json
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import httpx
@@ -10,6 +12,7 @@ from fastapi import HTTPException
 from pydantic import ValidationError
 
 from app.services.embedding.api import EmbeddingRequest
+from app.services.embedding.application import EmbeddingGatewayService
 from app.services.embedding.configuration import (
     EmbeddingConfigurationService,
     EmbeddingConfigurationValidationError,
@@ -17,7 +20,7 @@ from app.services.embedding.configuration import (
 )
 from app.services.embedding.console_api import _actor
 from app.services.embedding.provider import ConfiguredEmbeddingProvider
-from app.services.embedding.rag import RagKnowledgeService
+from app.services.embedding.rag import RagKnowledgeService, RagVectorUpsert
 
 
 class FakeConfiguration:
@@ -78,6 +81,213 @@ async def test_embedding_provider_sends_openai_request_and_orders_vectors() -> N
     assert second["embedding"] == [0.3, 0.4]
 
 
+@pytest.mark.asyncio
+async def test_volc_provider_uses_multimodal_endpoint_and_normalizes_single_vector() -> None:
+    sent: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        sent.append(request)
+        return httpx.Response(
+            200,
+            json={
+                "object": "list",
+                "model": "doubao-embedding-vision-251215",
+                "data": {"object": "embedding", "embedding": [0.1, 0.2]},
+                "usage": {"prompt_tokens": 12, "total_tokens": 12},
+            },
+        )
+
+    class VolcConfiguration:
+        async def resolve_model_pool(self, model: str) -> tuple[ResolvedEmbeddingModel, ...]:
+            return (
+                ResolvedEmbeddingModel(
+                    model=model,
+                    upstream_model="doubao-embedding-vision-251215",
+                    base_url="https://ark.cn-beijing.volces.com/api/v3",
+                    api_key="secret-upstream-key",
+                    route_prefix="volc",
+                ),
+            )
+
+    inputs: list[str | dict[str, object]] = [
+        {"type": "image_url", "image_url": {"url": "https://cdn.example.com/cat.png"}},
+        {"type": "text", "text": "a cat"},
+    ]
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        provider = ConfiguredEmbeddingProvider(VolcConfiguration(), client)  # type: ignore[arg-type]
+        result = await provider.embed("volc/doubao-embedding-vision-251215", inputs)
+
+    assert str(sent[0].url) == (
+        "https://ark.cn-beijing.volces.com/api/v3/embeddings/multimodal"
+    )
+    assert json.loads(sent[0].content)["input"] == inputs
+    assert result.input_tokens == 12
+    assert result.dimensions == 2
+    data = result.response["data"]
+    assert isinstance(data, list) and data[0]["embedding"] == [0.1, 0.2]
+
+
+@pytest.mark.asyncio
+async def test_volc_provider_processes_text_batch_and_preserves_input_order() -> None:
+    sent: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        sent.append(request)
+        text = json.loads(request.content)["input"][0]["text"]
+        value = float(len(text))
+        return httpx.Response(
+            200,
+            json={
+                "data": {"embedding": [value, value + 1]},
+                "usage": {"prompt_tokens": 2},
+            },
+        )
+
+    class VolcConfiguration:
+        async def resolve_model_pool(self, model: str) -> tuple[ResolvedEmbeddingModel, ...]:
+            return (
+                ResolvedEmbeddingModel(
+                    model=model,
+                    upstream_model="doubao-embedding-vision-251215",
+                    base_url="https://ark.cn-beijing.volces.com/api/v3",
+                    api_key="secret-upstream-key",
+                    route_prefix="volc",
+                ),
+            )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        provider = ConfiguredEmbeddingProvider(VolcConfiguration(), client)  # type: ignore[arg-type]
+        result = await provider.embed("volc/doubao-embedding-vision-251215", ["a", "bbb", "cc"])
+
+    assert len(sent) == 3
+    assert [json.loads(request.content)["input"][0]["text"] for request in sent] == [
+        "a",
+        "bbb",
+        "cc",
+    ]
+    data = result.response["data"]
+    assert isinstance(data, list)
+    assert [item["embedding"] for item in data if isinstance(item, dict)] == [
+        [1.0, 2.0],
+        [3.0, 4.0],
+        [2.0, 3.0],
+    ]
+    assert result.input_tokens == 6
+
+
+@pytest.mark.asyncio
+async def test_volc_text_batch_caps_upstream_concurrency_at_eight() -> None:
+    active = 0
+    peak = 0
+
+    async def fake_request(
+        _route: ResolvedEmbeddingModel,
+        content: list[dict[str, object]],
+        _parameters: dict[str, object],
+    ) -> tuple[list[float], int]:
+        nonlocal active, peak
+        active += 1
+        peak = max(peak, active)
+        await asyncio.sleep(0.005)
+        active -= 1
+        text = content[0].get("text")
+        assert isinstance(text, str)
+        return [float(len(text))], 1
+
+    async with httpx.AsyncClient() as client:
+        provider = ConfiguredEmbeddingProvider(None, client)
+        provider._volc_request = fake_request  # type: ignore[method-assign]
+        vectors, tokens = await provider._embed_volc(
+            ResolvedEmbeddingModel(
+                model="volc/test",
+                upstream_model="test",
+                base_url="https://example.com",
+                api_key="secret",
+                route_prefix="volc",
+            ),
+            [f"text-{index}" for index in range(20)],
+            {},
+        )
+
+    assert peak == 8
+    assert len(vectors) == 20
+    assert tokens == 20
+
+
+@pytest.mark.asyncio
+async def test_rag_vector_upsert_embeds_text_batch_once_and_persists_together() -> None:
+    project_id = uuid4()
+    owner_id = uuid4()
+    base = SimpleNamespace(
+        id=uuid4(),
+        project_id=project_id,
+        embedding_model="example/embed-v1",
+        vector_dimensions=None,
+    )
+
+    class FakeSession:
+        inserted: list[object] = []
+
+        async def scalar(self, _statement: object) -> object:
+            return base
+
+        async def scalars(self, _statement: object) -> list[object]:
+            return []
+
+        def add_all(self, items: list[object]) -> None:
+            self.inserted.extend(items)
+
+        async def flush(self) -> None:
+            return None
+
+    session = FakeSession()
+
+    class BeginContext:
+        async def __aenter__(self) -> FakeSession:
+            return session
+
+        async def __aexit__(self, *_args: object) -> None:
+            return None
+
+    class FakeSessionFactory:
+        def begin(self) -> BeginContext:
+            return BeginContext()
+
+    gateway = SimpleNamespace(
+        embed=AsyncMock(
+            return_value={
+                "data": [
+                    {"index": 1, "embedding": [0.3, 0.4]},
+                    {"index": 0, "embedding": [0.1, 0.2]},
+                ]
+            }
+        )
+    )
+    service = RagKnowledgeService(  # type: ignore[arg-type]
+        FakeSessionFactory(), gateway, None  # type: ignore[arg-type]
+    )
+    service._require_enabled = AsyncMock()  # type: ignore[method-assign]
+    service.get_knowledge_base = AsyncMock(return_value=base)  # type: ignore[method-assign]
+    key = SimpleNamespace(project_id=project_id, owner_id=owner_id, user_id=None)
+    records = [
+        RagVectorUpsert("part-1", "part-1", "first", {"order": 1}, "text", ["first"]),
+        RagVectorUpsert("part-2", "part-2", "second", {"order": 2}, "text", ["second"]),
+    ]
+
+    result = await service.upsert_vectors(key, base.id, records, trace_id="trace-batch")  # type: ignore[arg-type]
+
+    gateway.embed.assert_awaited_once()
+    embed_call = gateway.embed.await_args
+    assert embed_call is not None
+    assert embed_call.args[:4] == (key, "example/embed-v1", ["first", "second"], None)
+    assert embed_call.args[4].startswith("emb_")
+    assert len(result) == 2
+    assert len(session.inserted) == 4
+    chunks = [item for item in session.inserted if hasattr(item, "embedding")]
+    assert [chunk.embedding for chunk in chunks] == [[0.1, 0.2], [0.3, 0.4]]
+    assert [chunk.metadata_json for chunk in chunks] == [{"order": 1}, {"order": 2}]
+
+
 def test_rag_chunker_preserves_text_and_overlaps_adjacent_segments() -> None:
     text = "x" * 2300
     chunks = RagKnowledgeService._chunk_text(text, 1000, 100)
@@ -101,6 +311,37 @@ def test_embedding_request_accepts_text_and_rejects_empty_input() -> None:
     assert multiple.input == ["第一段", "第二段"]
     with pytest.raises(ValidationError, match="不能为空"):
         EmbeddingRequest(model="prefix/model", input=[" "])
+
+
+def test_embedding_request_accepts_image_and_video_content_objects() -> None:
+    image = EmbeddingRequest(
+        model="volc/doubao-embedding-vision-251215",
+        input=[{"type": "image_url", "image_url": {"url": "https://cdn.example.com/a.png"}}],
+    )
+    video = EmbeddingRequest(
+        model="volc/doubao-embedding-vision-251215",
+        input=[{"type": "video_url", "video_url": {"url": "https://cdn.example.com/a.mp4"}}],
+    )
+
+    assert image.input[0].type == "image_url"  # type: ignore[union-attr]
+    assert video.input[0].type == "video_url"  # type: ignore[union-attr]
+    with pytest.raises(ValidationError):
+        EmbeddingRequest(
+            model="volc/doubao-embedding-vision-251215",
+            input=[{"type": "video_url", "video_url": {"url": "https://cdn.example.com/a.txt"}}],
+        )
+
+
+def test_media_quota_reservation_uses_video_token_ceiling() -> None:
+    assert EmbeddingGatewayService._estimate_reservation(
+        {"type": "image_url", "image_url": {"url": "https://cdn.example.com/a.png"}}
+    ) == 20_480
+    assert EmbeddingGatewayService._estimate_reservation(
+        {"type": "video_url", "video_url": {"url": "https://cdn.example.com/a.mp4"}}
+    ) == 204_800
+    assert EmbeddingGatewayService._estimate_reservation(
+        {"type": "video_url", "video_url": {"max_video_tokens": 10_240}}
+    ) == 10_240
 
 
 def test_embedding_base_url_restricts_plain_http_to_loopback() -> None:

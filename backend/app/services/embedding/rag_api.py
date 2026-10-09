@@ -154,6 +154,7 @@ class VectorResponse(BaseModel):
     external_id: str | None = Field(description="调用方提供的来源 ID；同一旧文档的切片可能相同。")
     title: str = Field(description="来源记录标题。")
     content: str = Field(description="该条向量对应的文本切片，不包含向量数组。")
+    modality: str = Field(description="记录模态：text、image 或 video。")
     metadata: dict[str, object] = Field(description="该切片的 metadata 对象。")
     sequence: int = Field(description="该切片在来源文档中的从零开始序号。")
     created_by_user_id: UUID = Field(description="创建来源记录的用户 ID。")
@@ -168,6 +169,7 @@ class VectorResponse(BaseModel):
             external_id=item.external_id,
             title=item.title,
             content=item.content,
+            modality=item.modality,
             metadata=item.metadata,
             sequence=item.sequence,
             created_by_user_id=item.created_by_user_id,

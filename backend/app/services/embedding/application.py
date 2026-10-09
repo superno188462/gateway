@@ -17,6 +17,7 @@ from app.infrastructure.db.models import (
     UserServiceQuota,
 )
 from app.request_logging.application import GatewayRequestRecorder
+from app.services.embedding.multimodal import input_modality
 from app.services.embedding.provider import (
     ConfiguredEmbeddingProvider,
     EmbeddingProviderError,
@@ -55,12 +56,12 @@ class EmbeddingGatewayService:
         self,
         key: VerifiedApiKey,
         model: str,
-        inputs: list[str],
+        inputs: list[str | dict[str, object]],
         parameters: dict[str, object] | None,
         request_id: str,
     ) -> dict[str, object]:
         started = time.perf_counter()
-        reservation = sum(estimate_tokens(value) for value in inputs)
+        reservation = sum(self._estimate_reservation(value) for value in inputs)
         if reservation < 1:
             reservation = len(inputs)
         period = datetime.now(UTC).replace(day=1, hour=0, minute=0, second=0, microsecond=0)
@@ -82,7 +83,7 @@ class EmbeddingGatewayService:
                 EmbeddingRequestUsage(
                     request_id=request_id,
                     model=model[:200],
-                    modality="text",
+                    modality=input_modality(inputs),
                 )
             )
         try:
@@ -305,3 +306,20 @@ class EmbeddingGatewayService:
     @staticmethod
     def _latency(started: float) -> int:
         return max(0, round((time.perf_counter() - started) * 1000))
+
+    @staticmethod
+    def _estimate_reservation(value: str | dict[str, object]) -> int:
+        if isinstance(value, str):
+            return estimate_tokens(value)
+        input_type = value.get("type")
+        if input_type == "text":
+            text = value.get("text")
+            return estimate_tokens(text) if isinstance(text, str) else 0
+        if input_type == "image_url":
+            # Reserve conservatively; settle the exact usage reported by the upstream.
+            return 20_480
+        if input_type == "video_url":
+            video = value.get("video_url")
+            requested = video.get("max_video_tokens") if isinstance(video, dict) else None
+            return requested if isinstance(requested, int) and requested > 0 else 204_800
+        return 1

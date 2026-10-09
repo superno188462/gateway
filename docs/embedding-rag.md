@@ -4,9 +4,9 @@
 
 ## 能力边界
 
-- Embedding 首发支持纯文本，兼容 OpenAI `POST /v1/embeddings` 的主要字段与响应格式。图像和视频输入不是标准 OpenAI Embeddings API 的输入，本版预留 `modality`、模型、维度和适配器扩展，不会将图片或视频伪装为普通文本。
+- Embedding 支持 OpenAI 兼容纯文本输入；`volc/` 路由前缀另外适配豆包多模态向量接口，可输入文本、图片和视频。多模态输入是网关扩展的结构化格式，不属于 OpenAI 标准 Embeddings 输入结构。
 - RAG 首发支持通过 JSON API 写入纯文本文档，按知识库的字符长度和重叠长度切片，逐片生成向量，并用 cosine distance 返回相关片段。返回结果可由业务方拼入 Prompt，再自行请求 LLM。
-- 原始文本、文档元数据、切片、向量均按项目知识库保存于 PostgreSQL。媒体文件及其供应商解析流程尚未接入；实现图片/视频前需增加多模态模型适配器和文件对象存储方案。
+- 文本、图片/视频来源 URL、记录元数据和向量均按项目知识库保存于 PostgreSQL。媒体原文件由调用方或对象存储管理，网关仅保存媒体 URL 和生成的向量，不接收文件上传或托管媒体文件。
 - 知识库创建时固定一个 Embedding 模型。首条数据确定该库向量维度，后续维度必须匹配；切换模型或改变维度时应新建知识库并重新嵌入。
 - 当前向量列使用 pgvector `vector` 类型，并以精确 cosine distance 查询；没有 HNSW/IVFFlat 近似索引。适用于初版和规模较小的数据集，规模增长后需基于统一向量维度增加近似索引和召回评估。
 
@@ -53,11 +53,46 @@ curl http://127.0.0.1:8000/v1/embeddings \
 
 支持 `input` 为一个字符串或字符串数组（最多 64 条、合计 200,000 字符），`dimensions` 可选。当前只支持 `encoding_format=float`。响应遵循 OpenAI Embeddings 的 `object`、`data[].index`、`data[].embedding`、`usage` 结构，并通过 `x-request-id` 返回追踪 ID。月额度按上游 `usage.prompt_tokens` 结算；上游不返回用量时使用字符估算值。
 
+### 火山豆包多模态 Embedding
+
+管理员添加上游时将模型路由前缀设为 `volc`，Base URL 填 `https://ark.cn-beijing.volces.com/api/v3`，测试模型填写方舟模型 ID，例如 `doubao-embedding-vision-251215`。调用方模型为 `volc/doubao-embedding-vision-251215`。网关会把该前缀路由到方舟 `/embeddings/multimodal` 并转换上游响应；火山 API Key 仅保存在网关上游配置中。
+
+多模态输入用结构化 `input` 数组，一个数组代表一个组合内容并返回一个向量。仅文本仍可传 OpenAI 兼容的字符串或字符串数组：
+
+```json
+{
+  "model": "volc/doubao-embedding-vision-251215",
+  "input": [
+    {"type": "image_url", "image_url": {"url": "https://cdn.example.com/item.png"}},
+    {"type": "text", "text": "蓝色陶瓷杯"}
+  ],
+  "encoding_format": "float",
+  "dimensions": 2048
+}
+```
+
+视频示例：
+
+```json
+{
+  "model": "volc/doubao-embedding-vision-251215",
+  "input": [
+    {"type": "video_url", "video_url": {
+      "url": "https://cdn.example.com/demo.mp4",
+      "fps": 1,
+      "max_video_tokens": 120000
+    }}
+  ]
+}
+```
+
+媒体目前须提供可由火山方舟访问的 HTTPS URL；网关不下载或保存原文件。方舟视频格式限 MP4、AVI、MOV，单文件最大 50 MB，且不理解视频音轨。视频抽帧参数由上游模型处理，`fps` 等自定义抽帧选项要求使用 `doubao-embedding-vision-251215` 或更新版本。混合 input 数组会形成一个组合向量；如要每张图片或每段视频独立入库，应在向量数据库 API 中逐记录提交。
+
 ## 创建知识库、写入文档和检索
 
 项目需同时开通不计 token 的 `rag-v1` 知识库服务和有独立 token 额度的 `embedding-v1`。知识库创建时固定 Embedding 模型；文档写入和每次检索都会调用 Embedding 服务并消耗对应 token 额度。
 
-如果业务项目自行维护文档和切片，推荐使用 `docs/vector-database.md` 中的 `/v1/vector-stores` API：每次提交一批已经切好的单条文本片段，每条记录分别携带 metadata，由网关逐条生成并保存向量。下方 `/v1/rag/.../documents` 是保留的文档级兼容接口，仍会由网关接收整篇文本并按知识库配置切片。
+如果业务项目自行维护文档和切片，推荐使用 `docs/vector-database.md` 中的 `/v1/vector-stores` API：每次提交一批已经切好的单条文本片段，每条记录分别携带 metadata；网关将同批文本批量嵌入，并在一个数据库事务中写入。标准 OpenAI 兼容上游按数组一次请求；火山多模态接口按单向量请求语义最多并发 8 路。下方 `/v1/rag/.../documents` 是保留的文档级兼容接口，仍会由网关接收整篇文本并按知识库配置切片。
 
 ### 创建知识库
 
@@ -112,7 +147,3 @@ curl http://127.0.0.1:8000/v1/embeddings \
 迁移 `20261004_0038` 会执行 `CREATE EXTENSION IF NOT EXISTS vector` 并创建上游配置、用量、知识库、文档和向量切片表。数据库服务器必须安装 pgvector 扩展；开发 Compose 使用 `pgvector/pg16`，生产数据库升级前需确认已有 pgvector 可用，再运行 Alembic 升级。
 
 开发环境用量配置：`DEFAULT_EMBEDDING_MONTHLY_TOKEN_LIMIT`（默认 100,000；0 表示新用户不自动获得 Embedding 额度）。管理员密钥加密继续使用 `LLM_PROVIDER_SECRET_KEY`。
-
-## 后续多模态扩展
-
-多模态能力由模型支持情况决定，而不是由 pgvector 自动提供。OpenAI 兼容文本模型继续走 `POST /v1/embeddings`；需要直接嵌入图片/视频时，应增加模型能力声明与供应商适配器。视频通常要按时间片生成多条向量，并保存片段起止时间；检索策略要明确是同模态搜索还是跨模态共享空间搜索。图片/视频原文件建议放对象存储，PostgreSQL 保存对象引用、时间范围、提取出的文本元数据和 pgvector 向量。

@@ -21,6 +21,7 @@ from app.infrastructure.db.models import (
 from app.request_logging.application import GatewayRequestRecorder
 from app.services.embedding.application import EmbeddingGatewayService
 from app.services.embedding.catalog import RAG_SERVICE
+from app.services.embedding.multimodal import VideoUrl, validate_media_url
 
 logger = logging.getLogger("gateway.service.rag")
 
@@ -54,9 +55,22 @@ class RagVectorInfo:
     content: str
     metadata: dict[str, object]
     sequence: int
+    modality: str
     created_by_user_id: UUID
     created_at: datetime
     updated_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class RagVectorUpsert:
+    """一条调用方已切分好的记录，以及生成其向量所需的输入。"""
+
+    external_id: str
+    title: str
+    content: str
+    metadata: dict[str, object]
+    modality: str
+    embedding_inputs: list[str | dict[str, object]]
 
 
 class RagKnowledgeService:
@@ -151,10 +165,16 @@ class RagKnowledgeService:
         external_id: str | None,
         metadata: dict[str, object],
         trace_id: str,
+        modality: str = "text",
+        embedding_inputs: list[str | dict[str, object]] | None = None,
     ) -> RagDocumentInfo:
         await self._require_enabled(key.project_id)
         base = await self.get_knowledge_base(key.project_id, base_id)
-        chunks = self._chunk_text(content, base.chunk_size, base.chunk_overlap)
+        chunks = (
+            self._chunk_text(content, base.chunk_size, base.chunk_overlap)
+            if modality == "text"
+            else [content.strip()]
+        )
         if not chunks:
             raise RagError("empty_document", "文档内容为空", 422)
         if len(chunks) > 64:
@@ -169,10 +189,13 @@ class RagKnowledgeService:
                 )
                 if exists is not None:
                     raise RagError("document_id_conflict", "此 external_id 已存在", 409)
+        embed_inputs: list[str | dict[str, object]] = (
+            embedding_inputs if embedding_inputs is not None else list(chunks)
+        )
         embedded = await self._embedding_gateway.embed(
             key,
             base.embedding_model,
-            chunks,
+            embed_inputs,
             None,
             f"emb_{uuid4().hex}",
         )
@@ -229,7 +252,7 @@ class RagKnowledgeService:
                         embedding=vector,
                         embedding_model=base.embedding_model,
                         dimensions=dimensions,
-                        modality="text",
+                        modality=modality,
                         metadata_json=metadata,
                     )
                 )
@@ -241,6 +264,177 @@ class RagKnowledgeService:
             key, trace_id, "rag.document.create", f"新增 RAG 文档，片段数 {len(chunks)}"
         )
         return result
+
+    async def upsert_vectors(
+        self,
+        key: VerifiedApiKey,
+        base_id: UUID,
+        vectors: list[RagVectorUpsert],
+        *,
+        trace_id: str,
+    ) -> list[RagDocumentInfo]:
+        """批量生成向量并原子替换记录；文本记录合并为一次 Embedding 请求。"""
+        await self._require_enabled(key.project_id)
+        if not vectors:
+            raise RagError("empty_upsert", "至少需要一条向量记录", 422)
+        external_ids = [item.external_id for item in vectors]
+        if len(external_ids) != len(set(external_ids)):
+            raise RagError("duplicate_vector_id", "同一批次中的向量记录 ID 不能重复", 422)
+        base = await self.get_knowledge_base(key.project_id, base_id)
+
+        embeddings: list[list[float] | None] = [None] * len(vectors)
+        text_indexes = [index for index, item in enumerate(vectors) if item.modality == "text"]
+        if text_indexes:
+            response = await self._embedding_gateway.embed(
+                key,
+                base.embedding_model,
+                [vectors[index].content for index in text_indexes],
+                None,
+                f"emb_{uuid4().hex}",
+            )
+            self._assign_batch_embeddings(response, text_indexes, embeddings)
+
+        # 多模态组件在火山接口中共同组成一条向量；每条记录需独立请求。
+        for index, item in enumerate(vectors):
+            if item.modality == "text":
+                continue
+            response = await self._embedding_gateway.embed(
+                key,
+                base.embedding_model,
+                item.embedding_inputs,
+                None,
+                f"emb_{uuid4().hex}",
+            )
+            self._assign_batch_embeddings(response, [index], embeddings)
+
+        resolved_embeddings = [vector for vector in embeddings if vector is not None]
+        if len(resolved_embeddings) != len(vectors):
+            raise RagError("embedding_response_invalid", "Embedding 响应缺少向量", 502)
+        dimensions = len(resolved_embeddings[0])
+        if any(len(vector) != dimensions for vector in resolved_embeddings):
+            raise RagError("embedding_dimensions_invalid", "Embedding 向量维度不一致", 502)
+
+        inserted_documents: list[RagDocument] = []
+        try:
+            async with self._session_factory.begin() as session:
+                locked_base = await session.scalar(
+                    select(RagKnowledgeBase)
+                    .where(
+                        RagKnowledgeBase.id == base_id,
+                        RagKnowledgeBase.project_id == key.project_id,
+                    )
+                    .with_for_update()
+                )
+                if locked_base is None:
+                    raise RagError("knowledge_base_not_found", "向量集合不存在", 404)
+                if (
+                    locked_base.vector_dimensions is not None
+                    and locked_base.vector_dimensions != dimensions
+                ):
+                    raise RagError(
+                        "embedding_dimensions_conflict",
+                        "该集合已有不同向量维度的数据，请使用原模型或新建集合",
+                        409,
+                    )
+                locked_base.vector_dimensions = dimensions
+
+                existing_rows = await session.scalars(
+                    select(RagDocument)
+                    .where(
+                        RagDocument.knowledge_base_id == base_id,
+                        RagDocument.external_id.in_(external_ids),
+                    )
+                    .with_for_update()
+                )
+                for document in existing_rows:
+                    await session.delete(document)
+                # 先删除旧记录并 flush，释放 (collection, external_id) 唯一键，
+                # 再在同一事务内插入新版本；失败时整批回滚，不会留下空档。
+                await session.flush()
+
+                chunks: list[RagChunk] = []
+                for item, embedding in zip(vectors, resolved_embeddings, strict=True):
+                    document = RagDocument(
+                        id=uuid4(),
+                        knowledge_base_id=base_id,
+                        external_id=item.external_id,
+                        title=item.title,
+                        content=item.content,
+                        metadata_json=item.metadata,
+                        created_by=key.user_id or key.owner_id,
+                    )
+                    inserted_documents.append(document)
+                    chunks.append(
+                        RagChunk(
+                            knowledge_base_id=base_id,
+                            document_id=document.id,
+                            sequence=0,
+                            content=item.content,
+                            embedding=embedding,
+                            embedding_model=base.embedding_model,
+                            dimensions=dimensions,
+                            modality=item.modality,
+                            metadata_json=item.metadata,
+                        )
+                    )
+                session.add_all(inserted_documents)
+                await session.flush()
+                session.add_all(chunks)
+                await session.flush()
+        except RagError:
+            raise
+
+        await self._operation(
+            key,
+            trace_id,
+            "rag.vector.upsert",
+            f"批量写入向量记录，数量 {len(inserted_documents)}",
+        )
+        return [
+            RagDocumentInfo(
+                document.id,
+                document.external_id,
+                document.title,
+                1,
+                document.created_at,
+            )
+            for document in inserted_documents
+        ]
+
+    @staticmethod
+    def _assign_batch_embeddings(
+        response: dict[str, object],
+        target_indexes: list[int],
+        embeddings: list[list[float] | None],
+    ) -> None:
+        """按 OpenAI Embeddings 的 index 字段将批量响应映射回输入记录。"""
+        data = response.get("data")
+        if not isinstance(data, list) or len(data) != len(target_indexes):
+            raise RagError("embedding_response_invalid", "Embedding 返回的向量数量不正确", 502)
+        mapped: dict[int, list[float]] = {}
+        for fallback_index, item in enumerate(data):
+            if not isinstance(item, dict):
+                raise RagError("embedding_response_invalid", "Embedding 响应格式无效", 502)
+            index = item.get("index", fallback_index)
+            raw_vector = item.get("embedding")
+            if (
+                not isinstance(index, int)
+                or index < 0
+                or index >= len(target_indexes)
+                or not isinstance(raw_vector, list)
+                or not raw_vector
+            ):
+                raise RagError("embedding_response_invalid", "Embedding 响应格式无效", 502)
+            try:
+                mapped[index] = [float(value) for value in raw_vector]
+            except (TypeError, ValueError) as error:
+                raise RagError(
+                    "embedding_response_invalid", "Embedding 向量包含无效数值", 502
+                ) from error
+        if len(mapped) != len(target_indexes):
+            raise RagError("embedding_response_invalid", "Embedding 响应索引重复或缺失", 502)
+        for response_index, target_index in enumerate(target_indexes):
+            embeddings[target_index] = mapped[response_index]
 
     async def list_documents(self, project_id: UUID, base_id: UUID) -> list[RagDocumentInfo]:
         await self.get_knowledge_base(project_id, base_id)
@@ -282,6 +476,7 @@ class RagKnowledgeService:
                     chunk.content,
                     chunk.metadata_json,
                     chunk.sequence,
+                    chunk.modality,
                     document.created_by,
                     chunk.created_at,
                     chunk.updated_at,
@@ -305,10 +500,10 @@ class RagKnowledgeService:
         normalized_content = content.strip()
         if not normalized_content:
             raise RagError("empty_vector", "文本片段不能为空", 422)
-        if len(normalized_content) > base.chunk_size:
+        if len(normalized_content) > 6000:
             raise RagError(
                 "vector_too_large",
-                f"单条向量记录不能超过 {base.chunk_size} 个字符",
+                "单条向量记录不能超过 6000 个字符",
                 413,
             )
 
@@ -328,18 +523,57 @@ class RagKnowledgeService:
             raise RagError("vector_not_found", "向量记录不存在", 404)
         current_chunk, current_document = current_row
         current_content = current_chunk.content
+        current_modality = current_chunk.modality
+        if current_modality == "text" and len(normalized_content) > base.chunk_size:
+            raise RagError(
+                "vector_too_large",
+                f"单条文本向量记录不能超过 {base.chunk_size} 个字符",
+                413,
+            )
         current_dimensions = current_chunk.dimensions
         source_document_id = current_document.id
         source_external_id = current_document.external_id
         source_title = current_document.title
         source_created_by = current_document.created_by
+        source_metadata = current_chunk.metadata_json
+
+        source_media_url = source_metadata.get("media_url")
+        if current_modality in {"image", "video"}:
+            if not isinstance(source_media_url, str):
+                raise RagError("media_source_missing", "媒体记录缺少源 URL", 409)
+            updated_media_url = metadata.get("media_url", source_media_url)
+            if not isinstance(updated_media_url, str):
+                raise RagError("media_source_invalid", "媒体记录的 media_url 必须是字符串", 422)
+            try:
+                validate_media_url(updated_media_url)
+                if not updated_media_url.lower().startswith("https://"):
+                    raise ValueError("media_url 必须使用 HTTPS")
+                if current_modality == "video":
+                    VideoUrl.model_validate({"url": updated_media_url})
+            except ValueError as error:
+                raise RagError("media_source_invalid", str(error), 422) from error
+            metadata = {**metadata, "media_url": updated_media_url}
+        else:
+            updated_media_url = None
 
         embedding: list[float] | None = None
-        if normalized_content != current_content:
+        media_url_changed = updated_media_url != source_media_url
+        if normalized_content != current_content or media_url_changed:
+            embedding_inputs: list[str | dict[str, object]]
+            if current_modality == "text":
+                embedding_inputs = [normalized_content]
+            else:
+                assert updated_media_url is not None
+                media_type = "image_url" if current_modality == "image" else "video_url"
+                embedding_inputs = [
+                    {"type": media_type, media_type: {"url": updated_media_url}}
+                ]
+                if normalized_content != updated_media_url:
+                    embedding_inputs.append({"type": "text", "text": normalized_content})
             response = await self._embedding_gateway.embed(
                 key,
                 base.embedding_model,
-                [normalized_content],
+                embedding_inputs,
                 None,
                 f"emb_{uuid4().hex}",
             )
@@ -387,6 +621,7 @@ class RagKnowledgeService:
                 vector.content,
                 vector.metadata_json,
                 vector.sequence,
+                vector.modality,
                 source_created_by,
                 vector.created_at,
                 vector.updated_at,
@@ -450,15 +685,23 @@ class RagKnowledgeService:
         self,
         key: VerifiedApiKey,
         base_id: UUID,
-        query: str,
+        query: str | list[dict[str, object]],
         top_k: int,
         trace_id: str,
         metadata_filter: dict[str, object] | None = None,
     ) -> list[dict[str, object]]:
         await self._require_enabled(key.project_id)
         base = await self.get_knowledge_base(key.project_id, base_id)
+        if isinstance(query, str):
+            query_inputs: list[str | dict[str, object]] = [query]
+        else:
+            query_inputs = cast(list[str | dict[str, object]], query)
         embedded = await self._embedding_gateway.embed(
-            key, base.embedding_model, [query], None, f"emb_{uuid4().hex}"
+            key,
+            base.embedding_model,
+            query_inputs,
+            None,
+            f"emb_{uuid4().hex}",
         )
         data = embedded.get("data")
         vector = data[0].get("embedding") if isinstance(data, list) and data else None
@@ -477,7 +720,6 @@ class RagKnowledgeService:
                 .where(
                     RagChunk.knowledge_base_id == base_id,
                     RagChunk.dimensions == len(vector),
-                    RagChunk.modality == "text",
                 )
             )
             if metadata_filter:
@@ -496,6 +738,7 @@ class RagKnowledgeService:
                         "document_id": str(chunk.document_id),
                         "title": title,
                         "content": chunk.content,
+                        "modality": chunk.modality,
                         "score": max(-1.0, min(1.0, 1.0 - float(distance))),
                         "metadata": chunk.metadata_json,
                     }

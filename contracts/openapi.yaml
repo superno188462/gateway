@@ -1714,8 +1714,7 @@ paths:
       tags:
       - Vector Database
       summary: 批量写入已切分的向量记录
-      description: 每个 vectors 项都必须是调用方预先切好的单条文本片段。网关不会对其再次切片；每项独立生成一个向量并保存该项的 metadata。记录长度不能超过集合
-        chunk_size。旧客户端仍可使用 documents 作为字段名。
+      description: 文本 vectors 项必须是调用方预先切好的单条文本片段，媒体项以一条 HTTPS URL 为单位。网关不会再次切片；同批文本会合并为一次网关批量 Embedding 请求，再在一个数据库事务中写入；每项保存自己的 metadata。标准 OpenAI 兼容上游使用单次批接口；火山多模态上游按单向量语义最多并发 8 路请求。文本长度不能超过集合 chunk_size。旧客户端仍可使用 documents 作为字段名。
       operationId: upsert_vectors_v1_vector_stores_collections__collection__upsert_post
       security:
       - HTTPBearer: []
@@ -6594,8 +6593,7 @@ components:
           maxItems: 64
           minItems: 1
           title: Vectors
-          description: 调用方已切分好的向量记录列表，每项独立生成一条向量并使用自己的 metadata。为兼容旧客户端也接受 documents
-            字段。
+          description: 1–64 条调用方已切分好的记录，每项生成一条向量并使用自己的 metadata。同批文本统一批量 Embedding；为兼容旧客户端也接受 documents 字段。
       type: object
       required:
       - vectors

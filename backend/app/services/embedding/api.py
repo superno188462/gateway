@@ -18,18 +18,22 @@ from app.container import (
 )
 from app.request_logging.application import GatewayRequestRecorder
 from app.services.embedding.application import EmbeddingGatewayError, EmbeddingGatewayService
+from app.services.embedding.multimodal import EmbeddingInput
 
 router = APIRouter(tags=["Embedding Gateway"])
 logger = logging.getLogger("gateway.embedding.auth")
 
 
 class EmbeddingRequest(BaseModel):
-    """OpenAI embeddings.create 请求的首发子集（纯文本输入）。"""
+    """OpenAI 文本输入及网关约定的多模态输入。"""
 
     model_config = ConfigDict(extra="allow")
     model: str = Field(min_length=1, max_length=200)
-    input: str | list[str] = Field(
-        description="单段文本或文本数组；图像和视频由后续模态适配器支持。"
+    input: str | list[str | EmbeddingInput] = Field(
+        description=(
+            "文本可传字符串或字符串数组；火山多模态模型传结构化对象数组，"
+            "每个请求生成一个向量。"
+        )
     )
     encoding_format: str = Field(default="float", description="目前仅支持 float。")
     dimensions: int | None = Field(default=None, ge=1, le=65536)
@@ -37,14 +41,19 @@ class EmbeddingRequest(BaseModel):
 
     @field_validator("input")
     @classmethod
-    def validate_input(cls, value: str | list[str]) -> str | list[str]:
+    def validate_input(
+        cls, value: str | list[str | EmbeddingInput]
+    ) -> str | list[str | EmbeddingInput]:
         values = [value] if isinstance(value, str) else value
         if not values or len(values) > 64:
-            raise ValueError("input 必须包含 1 到 64 条文本")
-        if any(not item.strip() for item in values):
-            raise ValueError("input 文本不能为空")
-        if sum(len(item) for item in values) > 200_000:
-            raise ValueError("input 文本总长度不能超过 200,000 个字符")
+            raise ValueError("input 必须包含 1 到 64 个内容项")
+        if all(isinstance(item, str) for item in values):
+            if any(not item.strip() for item in values if isinstance(item, str)):
+                raise ValueError("input 文本不能为空")
+            if sum(len(item) for item in values if isinstance(item, str)) > 200_000:
+                raise ValueError("input 文本总长度不能超过 200,000 个字符")
+        elif any(isinstance(item, str) for item in values):
+            raise ValueError("文本批量 input 不能与多模态对象混用")
         return value
 
 
@@ -65,7 +74,7 @@ def openai_error(status_code: int, code: str, message: str, request_id: str) -> 
     )
 
 
-@router.post("/v1/embeddings", summary="创建文本嵌入向量", response_model=None)
+@router.post("/v1/embeddings", summary="创建文本或多模态嵌入向量", response_model=None)
 async def create_embeddings(
     payload: EmbeddingRequest,
     request: Request,
@@ -94,7 +103,11 @@ async def create_embeddings(
             error_code="invalid_api_key",
         )
         return openai_error(401, "invalid_api_key", "API Key 无效、已撤销或已过期", request_id)
-    inputs = [payload.input] if isinstance(payload.input, str) else payload.input
+    raw_inputs = [payload.input] if isinstance(payload.input, str) else payload.input
+    inputs: list[str | dict[str, object]] = [
+        item if isinstance(item, str) else item.model_dump(mode="json", exclude_none=True)
+        for item in raw_inputs
+    ]
     if payload.encoding_format != "float":
         return openai_error(
             422, "unsupported_encoding_format", "目前仅支持 encoding_format=float", request_id

@@ -707,7 +707,7 @@ class RagDocument(Base):
 
 
 class RagChunk(Base):
-    """pgvector 中保存的文本切片；media_type/model/dimensions 为多模态扩展预留。"""
+    """pgvector 中保存的单条文本、图片或视频向量记录。"""
 
     __tablename__ = "rag_chunks"
     __table_args__ = (
