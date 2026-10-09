@@ -90,15 +90,30 @@ class EmbeddingGatewayService:
             # 额度检查也必须经过统一错误转换，否则未开通服务时会冒泡成裸 500。
             await self._reserve(key, model, request_id, period, reservation, started)
             result = await self._provider.embed(model, inputs, parameters)
-        except EmbeddingGatewayError:
+        except EmbeddingGatewayError as error:
+            logger.error(
+                "embedding_request_failed request_id=%s error_code=%s status_code=%d message=%s",
+                request_id,
+                error.code,
+                error.status_code,
+                str(error),
+            )
             raise
         except EmbeddingProviderError as error:
             await self._release(
                 key, request_id, period, reservation, started, error.code, str(error)
             )
-            raise EmbeddingGatewayError(
+            gateway_error = EmbeddingGatewayError(
                 error.code, str(error), error.status_code, request_id
-            ) from error
+            )
+            logger.error(
+                "embedding_request_failed request_id=%s error_code=%s status_code=%d message=%s",
+                request_id,
+                gateway_error.code,
+                gateway_error.status_code,
+                str(gateway_error),
+            )
+            raise gateway_error from error
         except Exception as error:
             logger.exception("embedding_unhandled request_id=%s model=%s", request_id, model)
             await self._release(

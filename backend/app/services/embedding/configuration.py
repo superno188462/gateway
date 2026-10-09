@@ -199,42 +199,50 @@ class EmbeddingConfigurationService:
             return self._to_info(row)
 
     async def resolve_model_pool(self, model: str) -> tuple[ResolvedEmbeddingModel, ...]:
+        """按优先级返回同名模型连接；显式前缀仅在对应路由组内选择。
+
+        模型名不带前缀时，所有启用的连接都作为候选并按优先级排序，
+        由调用方依次尝试；模型名带 ``前缀/`` 时视为强制指定路由组，
+        只返回 route_prefix 匹配的连接。
+        """
         normalized = model.strip()
         if not normalized:
             return ()
-        prefix, separator, upstream_model = normalized.partition("/")
+        requested_prefix: str | None = None
+        upstream_model = normalized
+        if "/" in normalized:
+            requested_prefix, separator, upstream_model = normalized.partition("/")
+            if not requested_prefix or not upstream_model:
+                return ()
+            requested_prefix = requested_prefix.lower()
         async with self._session_factory() as session:
+            statement = select(EmbeddingProviderConfig).where(
+                EmbeddingProviderConfig.status == "active"
+            )
+            if requested_prefix is not None:
+                statement = statement.where(
+                    EmbeddingProviderConfig.route_prefix == requested_prefix
+                )
             rows = await session.scalars(
-                select(EmbeddingProviderConfig)
-                .where(EmbeddingProviderConfig.status == "active")
-                .order_by(
+                statement.order_by(
                     EmbeddingProviderConfig.priority,
                     EmbeddingProviderConfig.created_at,
                     EmbeddingProviderConfig.id,
                 )
             )
             configs = list(rows)
-        resolved: list[ResolvedEmbeddingModel] = []
-        for row in configs:
-            if row.route_prefix is not None and (
-                not separator or row.route_prefix.casefold() != prefix.casefold()
-            ):
-                continue
-            if row.route_prefix is None and separator:
-                continue
-            key = self._require_cipher().decrypt(row.encrypted_api_key)
-            resolved.append(
-                ResolvedEmbeddingModel(
-                    model=normalized,
-                    upstream_model=upstream_model if separator else normalized,
-                    base_url=row.base_url,
-                    api_key=key,
-                    connection_name=row.name,
-                    supplier_name=row.supplier_name,
-                    route_prefix=row.route_prefix,
-                )
+        return tuple(
+            ResolvedEmbeddingModel(
+                model=normalized,
+                upstream_model=upstream_model,
+                base_url=row.base_url,
+                api_key=self._require_cipher().decrypt(row.encrypted_api_key),
+                connection_name=row.name,
+                supplier_name=row.supplier_name,
+                route_prefix=row.route_prefix,
             )
-        return tuple(resolved)
+            for row in configs
+        )
 
     async def active_model_codes(self) -> tuple[str, ...]:
         """动态模型名无法枚举；模型前缀可经 provider-catalog 单独查询。"""

@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import logging
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 from uuid import uuid4
@@ -12,14 +13,14 @@ from fastapi import HTTPException
 from pydantic import ValidationError
 
 from app.services.embedding.api import EmbeddingRequest
-from app.services.embedding.application import EmbeddingGatewayService
+from app.services.embedding.application import EmbeddingGatewayError, EmbeddingGatewayService
 from app.services.embedding.configuration import (
     EmbeddingConfigurationService,
     EmbeddingConfigurationValidationError,
     ResolvedEmbeddingModel,
 )
 from app.services.embedding.console_api import _actor
-from app.services.embedding.provider import ConfiguredEmbeddingProvider
+from app.services.embedding.provider import ConfiguredEmbeddingProvider, EmbeddingProviderError
 from app.services.embedding.rag import RagKnowledgeService, RagVectorUpsert
 
 
@@ -377,3 +378,115 @@ async def test_rag_console_allows_viewer_reads_but_rejects_writes() -> None:
     with pytest.raises(HTTPException, match="项目成员无权执行此操作") as error:
         await _actor(project_id, viewer, Projects(), write=True)  # type: ignore[arg-type]
     assert error.value.status_code == 403
+
+
+def _provider_row(route_prefix: str | None, name: str) -> SimpleNamespace:
+    return SimpleNamespace(
+        route_prefix=route_prefix,
+        name=name,
+        supplier_name=name,
+        base_url=f"https://{name}.example/v3",
+        encrypted_api_key=f"enc-{name}",
+    )
+
+
+class _AsyncContext:
+    def __init__(self, value: object) -> None:
+        self._value = value
+
+    async def __aenter__(self) -> object:
+        return self._value
+
+    async def __aexit__(self, *_args: object) -> None:
+        return None
+
+
+def _configuration_service(rows: list[SimpleNamespace]) -> EmbeddingConfigurationService:
+    session = SimpleNamespace(scalars=AsyncMock(return_value=rows))
+
+    def session_factory() -> SimpleNamespace:
+        return _AsyncContext(session)  # type: ignore[return-value]
+    cipher = SimpleNamespace(decrypt=lambda value: f"plain-{value}")
+    return EmbeddingConfigurationService(session_factory, cipher)  # type: ignore[arg-type]
+
+
+@pytest.mark.asyncio
+async def test_resolve_model_pool_without_prefix_matches_all_by_priority() -> None:
+    rows = [_provider_row("volc", "火山"), _provider_row(None, "通用")]
+    service = _configuration_service(rows)
+
+    routes = await service.resolve_model_pool("doubao-embedding-vision")
+
+    assert [route.connection_name for route in routes] == ["火山", "通用"]
+    assert [route.upstream_model for route in routes] == [
+        "doubao-embedding-vision",
+        "doubao-embedding-vision",
+    ]
+    assert [route.route_prefix for route in routes] == ["volc", None]
+
+
+@pytest.mark.asyncio
+async def test_resolve_model_pool_with_prefix_pins_route_group() -> None:
+    rows = [_provider_row("volc", "火山")]
+    service = _configuration_service(rows)
+
+    routes = await service.resolve_model_pool("volc/doubao-embedding-vision")
+
+    assert len(routes) == 1
+    assert routes[0].connection_name == "火山"
+    assert routes[0].upstream_model == "doubao-embedding-vision"
+    assert routes[0].route_prefix == "volc"
+
+
+@pytest.mark.asyncio
+async def test_resolve_model_pool_unknown_prefix_and_null_prefix_provider() -> None:
+    # 显式前缀的过滤由 SQL WHERE route_prefix 保证；记录为空即返回空路由池
+    assert await _configuration_service([]).resolve_model_pool("volc/model-x") == ()
+
+
+@pytest.mark.asyncio
+async def test_embedding_failure_from_internal_caller_is_in_technical_log(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    request_id = "emb_testlog_0001"
+    session = SimpleNamespace(flush=AsyncMock(), add=lambda _item: None)
+    begin_context = _AsyncContext(session)
+    session_factory = SimpleNamespace(begin=lambda: begin_context)
+    recorder = SimpleNamespace(start_in_session=AsyncMock())
+    provider = SimpleNamespace()
+    service = EmbeddingGatewayService(
+        session_factory,  # type: ignore[arg-type]
+        provider,
+        recorder,  # type: ignore[arg-type]
+    )
+    service._reserve = AsyncMock()  # type: ignore[method-assign]
+    service._release = AsyncMock()  # type: ignore[method-assign]
+    provider.embed = AsyncMock(
+        side_effect=EmbeddingProviderError(
+            "model_route_not_found", "没有可用的 Embedding 模型路由", 404
+        )
+    )
+
+    caplog.set_level(logging.ERROR, logger="gateway.service.embedding")
+    with pytest.raises(EmbeddingGatewayError) as exc_info:
+        await service.embed(
+            SimpleNamespace(
+                project_id=uuid4(),
+                id=uuid4(),
+                user_id=None,
+                username="tester",
+            ),
+            "doubao-embedding-vision",
+            ["测试文本"],
+            None,
+            request_id,
+        )
+
+    assert exc_info.value.code == "model_route_not_found"
+    assert any(
+        record.name == "gateway.service.embedding"
+        and f"request_id={request_id}" in record.getMessage()
+        and "error_code=model_route_not_found" in record.getMessage()
+        and "status_code=404" in record.getMessage()
+        for record in caplog.records
+    )
