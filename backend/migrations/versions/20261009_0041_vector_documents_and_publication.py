@@ -114,12 +114,19 @@ def upgrade() -> None:
             RETURN NEW;
         END;
         $$ LANGUAGE plpgsql;
+        """
+    )
+    op.execute(
+        """
         CREATE TRIGGER trg_validate_rag_parent_record
         BEFORE INSERT OR UPDATE OF knowledge_base_id, external_id, record_kind,
             parent_external_id, namespace, logical_document_id, version_id, is_published
         ON rag_documents
         FOR EACH ROW EXECUTE FUNCTION validate_rag_parent_record();
-
+        """
+    )
+    op.execute(
+        """
         CREATE FUNCTION prevent_rag_parent_scope_drift() RETURNS trigger AS $$
         BEGIN
             IF NEW.record_kind <> 'vector' AND EXISTS (
@@ -146,6 +153,10 @@ def upgrade() -> None:
             RETURN NEW;
         END;
         $$ LANGUAGE plpgsql;
+        """
+    )
+    op.execute(
+        """
         CREATE TRIGGER trg_prevent_rag_parent_scope_drift
         BEFORE UPDATE OF knowledge_base_id, external_id, record_kind,
             namespace, logical_document_id, version_id
@@ -169,6 +180,10 @@ def upgrade() -> None:
             RETURN NEW;
         END;
         $$ LANGUAGE plpgsql;
+        """
+    )
+    op.execute(
+        """
         CREATE TRIGGER trg_validate_rag_chunk_record_kind
         BEFORE INSERT OR UPDATE OF document_id, knowledge_base_id
         ON rag_chunks
