@@ -239,6 +239,9 @@ async def test_rag_vector_upsert_embeds_text_batch_once_and_persists_together() 
         def add_all(self, items: list[object]) -> None:
             self.inserted.extend(items)
 
+        def add(self, item: object) -> None:
+            self.inserted.append(item)
+
         async def flush(self) -> None:
             return None
 
@@ -252,6 +255,9 @@ async def test_rag_vector_upsert_embeds_text_batch_once_and_persists_together() 
             return None
 
     class FakeSessionFactory:
+        def __call__(self) -> BeginContext:
+            return BeginContext()
+
         def begin(self) -> BeginContext:
             return BeginContext()
 
@@ -288,6 +294,93 @@ async def test_rag_vector_upsert_embeds_text_batch_once_and_persists_together() 
     chunks = [item for item in session.inserted if hasattr(item, "embedding")]
     assert [chunk.embedding for chunk in chunks] == [[0.1, 0.2], [0.3, 0.4]]
     assert [chunk.metadata_json for chunk in chunks] == [{"order": 1}, {"order": 2}]
+
+
+@pytest.mark.asyncio
+async def test_rag_document_record_skips_embedding_and_dimension_initialization() -> None:
+    project_id = uuid4()
+    owner_id = uuid4()
+    base = SimpleNamespace(
+        id=uuid4(),
+        project_id=project_id,
+        embedding_model="example/embed-v1",
+        vector_dimensions=None,
+    )
+
+    class FakeSession:
+        inserted: list[object] = []
+        scalar_calls = 0
+
+        async def scalar(self, _statement: object) -> object:
+            self.scalar_calls += 1
+            return base if self.scalar_calls == 1 else None
+
+        async def scalars(self, _statement: object) -> list[object]:
+            return []
+
+        def add(self, item: object) -> None:
+            self.inserted.append(item)
+
+        def add_all(self, items: list[object]) -> None:
+            self.inserted.extend(items)
+
+        async def flush(self) -> None:
+            return None
+
+    session = FakeSession()
+
+    class SessionContext:
+        async def __aenter__(self) -> FakeSession:
+            return session
+
+        async def __aexit__(self, *_args: object) -> None:
+            return None
+
+    class FakeSessionFactory:
+        def __call__(self) -> SessionContext:
+            return SessionContext()
+
+        def begin(self) -> SessionContext:
+            return SessionContext()
+
+    gateway = SimpleNamespace(embed=AsyncMock())
+    service = RagKnowledgeService(  # type: ignore[arg-type]
+        FakeSessionFactory(), gateway, None  # type: ignore[arg-type]
+    )
+    service._require_enabled = AsyncMock()  # type: ignore[method-assign]
+    service.get_knowledge_base = AsyncMock(return_value=base)  # type: ignore[method-assign]
+    service._operation = AsyncMock()  # type: ignore[method-assign]
+    key = SimpleNamespace(project_id=project_id, owner_id=owner_id, user_id=None)
+
+    result = await service.upsert_vectors(
+        key,  # type: ignore[arg-type]
+        base.id,
+        [
+            RagVectorUpsert(
+                "parent-1",
+                "parent-1",
+                "完整父块正文" * 100,
+                {"source": "manual"},
+                "text",
+                [],
+                record_kind="document",
+                namespace="knowledge",
+                logical_document_id="doc-1",
+                version_id="v1",
+                staged=True,
+            )
+        ],
+        trace_id="trace-document",
+    )
+
+    gateway.embed.assert_not_awaited()
+    assert result[0].chunks == 0
+    assert base.vector_dimensions is None
+    assert len(session.inserted) == 1
+    stored = session.inserted[0]
+    assert stored.record_kind == "document"
+    assert stored.is_published is False
+    assert stored.was_published is False
 
 
 def test_rag_chunker_preserves_text_and_overlaps_adjacent_segments() -> None:
@@ -348,6 +441,9 @@ async def test_update_knowledge_base_settings_persists_prefix_and_record_limit()
             return None
 
     class FakeSessionFactory:
+        def __call__(self) -> BeginContext:
+            return BeginContext()
+
         def begin(self) -> BeginContext:
             return BeginContext()
 

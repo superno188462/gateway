@@ -8,7 +8,7 @@ from typing import Annotated, Any, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from app.application.api_keys import VerifiedApiKey
 from app.container import get_embedding_rag_service
@@ -41,14 +41,34 @@ class CollectionResponse(BaseModel):
 
 
 class VectorDocument(BaseModel):
-    """一条已准备好的文本、图片或视频向量记录。"""
+    """一条外部记录；vector 会嵌入，document 仅保存正文。"""
 
     id: str = Field(min_length=1, max_length=200, description="调用方提供的稳定记录 ID。")
+    record_kind: Literal["vector", "document"] = Field(
+        default="vector", description="vector 生成向量；document 只保存正文和 metadata。"
+    )
+    parent_id: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=200,
+        description="同项目、同 collection 下 document 记录的外部 ID；先写父记录再写子记录。",
+    )
+    namespace: str | None = Field(default=None, min_length=1, max_length=200)
+    document_id: str | None = Field(default=None, min_length=1, max_length=200)
+    version_id: str | None = Field(default=None, min_length=1, max_length=200)
+    staged: bool = Field(
+        default=False,
+        description=(
+            "暂存版本不参与普通 query/fetch；发布时需提供 namespace、document_id 和 version_id。"
+        ),
+    )
     modality: Literal["text", "image", "video"] = "text"
     content: str | None = Field(
         default=None,
-        max_length=6000,
-        description="文本内容或可选图像/视频说明；文本已由调用方切片。",
+        max_length=20_000,
+        description=(
+            "正文；vector 文本受 collection.chunk_size 限制，document 最多 20,000 个 Unicode 字符。"
+        ),
     )
     media_url: str | None = Field(
         default=None,
@@ -67,6 +87,14 @@ class VectorDocument(BaseModel):
 
     @model_validator(mode="after")
     def validate_content(self) -> "VectorDocument":
+        if self.staged and not (self.namespace and self.document_id and self.version_id):
+            raise ValueError("staged 记录必须填写 namespace、document_id 和 version_id")
+        if bool(self.namespace) != bool(self.document_id):
+            raise ValueError("namespace 和 document_id 必须同时提供")
+        if self.version_id and not (self.namespace and self.document_id):
+            raise ValueError("version_id 必须同时提供 namespace 和 document_id")
+        if self.version_id and not self.staged:
+            raise ValueError("带版本字段的记录必须先暂存，再通过 publish 原子启用")
         if self.modality == "text":
             if self.content is not None and not self.content.strip():
                 raise ValueError("content 不能为空")
@@ -77,6 +105,8 @@ class VectorDocument(BaseModel):
             if self.video_options is not None:
                 raise ValueError("video_options 仅适用于视频记录")
         else:
+            if self.record_kind != "vector":
+                raise ValueError("document 普通记录仅支持 text modality")
             if self.media_url is None:
                 raise ValueError("图片或视频记录必须填写 media_url")
             validate_media_url(self.media_url)
@@ -88,17 +118,29 @@ class VectorDocument(BaseModel):
                 raise ValueError("video_options 仅适用于视频记录")
         if self.content is not None and not self.content.strip():
             raise ValueError("content 不能为空")
+        if (
+            self.record_kind == "vector"
+            and self.modality == "text"
+            and len(self.content or "") > 6000
+        ):
+            raise ValueError("向量文本不能超过 6000 个字符")
+        if self.record_kind == "document" and (
+            self.modality != "text" or self.media_url is not None or self.video_options is not None
+        ):
+            raise ValueError("document 普通记录只支持正文和 metadata")
+        if self.record_kind == "document" and self.parent_id is not None:
+            raise ValueError("第一版 document 普通记录必须是顶层父记录")
         return self
 
 
 class UpsertRequest(BaseModel):
-    """批量写入已切分记录；每个输入项恰好生成一条向量。"""
+    """批量写入向量记录和普通正文记录；不负责文档切片。"""
 
     vectors: list[VectorDocument] = Field(
         min_length=1,
         max_length=64,
         description=(
-            "1–64 条调用方已切分好的记录，每项生成一条向量并使用自己的 metadata。"
+            "1–64 条记录。record_kind=vector 每项生成向量；document 只存正文，不调用 Embedding。"
             "同批文本统一批量 Embedding；为兼容旧客户端也接受 documents 字段。"
         ),
     )
@@ -116,11 +158,43 @@ class UpsertRequest(BaseModel):
         ids = [document.id for document in self.vectors]
         if len(ids) != len(set(ids)):
             raise ValueError("同一批次中的向量记录 id 不能重复")
+        if any(item.parent_id in ids for item in self.vectors if item.parent_id):
+            raise ValueError("父记录必须先单独写入，不能在同一批次内引用")
+        if len(self.model_dump_json().encode("utf-8")) > 4 * 1024 * 1024:
+            raise ValueError("单次请求体不能超过 4 MiB")
         return self
 
 
 class DeleteRequest(BaseModel):
     ids: list[str] = Field(min_length=1, max_length=256)
+
+    @field_validator("ids")
+    @classmethod
+    def validate_ids(cls, values: list[str]) -> list[str]:
+        if any(not value or len(value) > 200 for value in values):
+            raise ValueError("每个 ID 必须为 1 到 200 个字符")
+        return values
+
+
+class FetchRequest(BaseModel):
+    """按外部 ID 批量读取已发布的普通或向量记录，不返回 embedding。"""
+
+    ids: list[str] = Field(min_length=1, max_length=256)
+
+    @field_validator("ids")
+    @classmethod
+    def validate_ids(cls, values: list[str]) -> list[str]:
+        if any(not value or len(value) > 200 for value in values):
+            raise ValueError("每个 ID 必须为 1 到 200 个字符")
+        return values
+
+
+class PublishVersionRequest(BaseModel):
+    """原子启用一个暂存版本，并停用指定业务文档旧版本。"""
+
+    namespace: str = Field(min_length=1, max_length=200)
+    document_id: str = Field(min_length=1, max_length=200)
+    version_id: str = Field(min_length=1, max_length=200)
 
 
 class QueryRequest(BaseModel):
@@ -152,9 +226,7 @@ def _collection(item: Any) -> CollectionResponse:
     )
 
 
-async def _base(
-    service: RagKnowledgeService, key: VerifiedApiKey, collection: str
-) -> Any:
+async def _base(service: RagKnowledgeService, key: VerifiedApiKey, collection: str) -> Any:
     items = await service.list_knowledge_bases(key.project_id)
     item = next((item for item in items if item.name == collection), None)
     if item is None:
@@ -215,14 +287,20 @@ async def delete_collection(
 
 @router.post(
     "/collections/{collection}/upsert",
-    summary="批量写入已切分的向量记录",
+    summary="批量写入普通记录和向量记录",
     description=(
-        "文本 vectors 项必须是调用方预先切好的单条文本片段，媒体项以一条 HTTPS URL 为单位。"
-        "网关不会再次切片；同批文本会合并为一次网关批量 Embedding 请求，"
-        "再在一个数据库事务中写入；每项保存自己的 metadata。标准 OpenAI 兼容上游使用单次批接口；"
-        "火山多模态上游按单向量语义最多并发 8 路请求。"
-        "文本长度不能超过集合 chunk_size。"
-        "旧客户端仍可使用 documents 作为字段名。"
+        "vectors 每批最多 64 条、请求体最多 4 MiB。"
+        "record_kind=vector 对预切片文本或媒体生成 Embedding；"
+        "record_kind=document 只存正文和 metadata，"
+        "正文最多 20,000 个 Unicode 码位并跳过 Embedding。"
+        "向量文本不超过 collection.chunk_size。ID 在项目+collection 内唯一，"
+        "同类型重复提交幂等替换；vector/document 类型不可互转。"
+        "父记录须先单独写入，且必须是同项目、同 collection 的 document。"
+        "Embedding 成功后，记录在一个数据库事务中替换；外部 Embedding 用量不可随事务回滚。"
+        "提供 namespace、document_id、version_id 时必须设 staged=true，并调用 publish 后才可见。"
+        "响应 id 保留为内部 UUID；external_id 才是调用方 ID，"
+        "后续 fetch、delete 和 parent_id 均使用它。"
+        "省略 record_kind 时默认为 vector，旧客户端也可继续传 documents 字段。"
     ),
 )
 async def upsert_vectors(
@@ -233,11 +311,14 @@ async def upsert_vectors(
     service: Annotated[RagKnowledgeService, Depends(get_embedding_rag_service)],
 ) -> dict[str, object]:
     try:
+        if len(await request.body()) > 4 * 1024 * 1024:
+            raise RagError("request_too_large", "单次请求体不能超过 4 MiB", 413)
         base = await _base(service, key, collection)
         oversized = [
             document.id
             for document in payload.vectors
-            if document.modality == "text"
+            if document.record_kind == "vector"
+            and document.modality == "text"
             and document.content is not None
             and len(document.content.strip()) > base.chunk_size
         ]
@@ -252,7 +333,9 @@ async def upsert_vectors(
             stored_content = (document.content or document.media_url or "").strip()
             metadata = dict(document.metadata)
             embedding_inputs: list[str | dict[str, object]]
-            if document.modality == "text":
+            if document.record_kind == "document":
+                embedding_inputs = []
+            elif document.modality == "text":
                 embedding_inputs = [stored_content]
             else:
                 assert document.media_url is not None
@@ -277,6 +360,12 @@ async def upsert_vectors(
                     metadata=metadata,
                     modality=document.modality,
                     embedding_inputs=embedding_inputs,
+                    record_kind=document.record_kind,
+                    parent_id=document.parent_id,
+                    namespace=document.namespace,
+                    logical_document_id=document.document_id,
+                    version_id=document.version_id,
+                    staged=document.staged,
                 )
             )
 
@@ -287,17 +376,74 @@ async def upsert_vectors(
             trace_id=request.state.trace_id,
         )
         results = []
-        for item in items:
+        for input_record, item in zip(payload.vectors, items, strict=True):
             results.append(
                 {
                     "id": str(item.id),
                     "external_id": item.external_id,
                     "vectors": item.chunks,
+                    "record_kind": input_record.record_kind,
+                    "parent_id": input_record.parent_id,
                     # Preserve the old response field for existing clients.
                     "chunks": item.chunks,
                 }
             )
         return {"collection": collection, "upserted": results}
+    except RagError as error:
+        raise _error(error) from error
+
+
+@router.post(
+    "/collections/{collection}/fetch",
+    summary="按外部 ID 批量读取记录",
+    description=(
+        "精确读取已发布的 vector/document 正文和 metadata；不返回 embedding、不调用 Embedding。"
+        "最多 256 个 ID，去重后按首次出现顺序返回。暂存记录与不存在的 ID 一样列入 missing_ids。"
+    ),
+)
+async def fetch_collection_records(
+    collection: str,
+    payload: FetchRequest,
+    request: Request,
+    key: Annotated[VerifiedApiKey, Depends(verify_project_key)],
+    service: Annotated[RagKnowledgeService, Depends(get_embedding_rag_service)],
+) -> dict[str, object]:
+    try:
+        base = await _base(service, key, collection)
+        records, missing_ids = await service.fetch_records(
+            key, base.id, payload.ids, trace_id=request.state.trace_id
+        )
+        return {"collection": collection, "records": records, "missing_ids": missing_ids}
+    except RagError as error:
+        raise _error(error) from error
+
+
+@router.post(
+    "/collections/{collection}/publish",
+    summary="原子发布暂存版本",
+    description=(
+        "在项目 API Key 所属项目和 collection 内，按 namespace、document_id 发布指定 version_id。"
+        "目标版本的暂存记录在一个数据库事务中启用，旧版本退出 query/fetch；之后可另行清理旧记录。"
+    ),
+)
+async def publish_collection_version(
+    collection: str,
+    payload: PublishVersionRequest,
+    request: Request,
+    key: Annotated[VerifiedApiKey, Depends(verify_project_key)],
+    service: Annotated[RagKnowledgeService, Depends(get_embedding_rag_service)],
+) -> dict[str, object]:
+    try:
+        base = await _base(service, key, collection)
+        result = await service.publish_version(
+            key,
+            base.id,
+            namespace=payload.namespace,
+            logical_document_id=payload.document_id,
+            version_id=payload.version_id,
+            trace_id=request.state.trace_id,
+        )
+        return {"collection": collection, **result}
     except RagError as error:
         raise _error(error) from error
 
@@ -337,12 +483,9 @@ async def delete_documents(
 ) -> dict[str, object]:
     try:
         base = await _base(service, key, collection)
-        documents = await service.list_documents(key.project_id, base.id)
-        deleted = 0
-        for document in documents:
-            if document.external_id in payload.ids:
-                await service.delete_document(key, base.id, document.id, request.state.trace_id)
-                deleted += 1
-        return {"collection": collection, "deleted": deleted}
+        result = await service.delete_records(key, base.id, payload.ids, request.state.trace_id)
+        deleted_ids = result.get("deleted_ids")
+        deleted = len(deleted_ids) if isinstance(deleted_ids, list) else 0
+        return {"collection": collection, "deleted": deleted, **result}
     except RagError as error:
         raise _error(error) from error

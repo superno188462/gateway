@@ -134,8 +134,8 @@
 ## D-018：Embedding 与 RAG 知识库首版
 
 - 状态：已决定；A9 后端首版实现中。
-- Embedding：管理员上游连接配置遵循 LLM 的 OpenAI 兼容 Base URL、加密 API Key、模型前缀路由、同组优先级故障切换；调用方使用项目 API Key 调用 `/v1/embeddings`。首批仅实现文本模态，独立 `embedding-v1` 按上游 token usage 结算。
-- 多模态：图像、视频嵌入能力由各上游模型和协议决定，不能假定任意 OpenAI 兼容 Embedding API 都接收媒体。后续通过显式模型能力声明和供应商适配器扩展；媒体上传及原文件对象存储待选定供应商后设计。PostgreSQL 中预留 modality、model 和 dimensions 字段。
+- Embedding：管理员上游连接配置遵循 LLM 的 Base URL、加密 API Key、模型前缀路由、同组优先级故障切换；调用方使用项目 API Key 调用 `/v1/embeddings`。普通前缀使用 OpenAI 兼容文本接口；`volc` 前缀走火山方舟适配器。独立 `embedding-v1` 按上游 token usage 结算。
+- 多模态：`volc/doubao-embedding-vision-*` 支持文本、图片 URL 和视频 URL，通过方舟多模态 Embedding API 生成同一空间向量；普通 OpenAI Embedding 上游仍只支持文本。媒体原文件由业务方/对象存储管理，网关保存 URL、metadata 和向量，不提供上传或对象存储。视频抽帧由上游模型处理。
 - RAG：使用现有 PostgreSQL 安装 pgvector 扩展，项目级隔离知识库、文档、切片、元数据和向量。首版知识库固定 Embedding model，首次嵌入确定维度，切换维度需要新建知识库并重嵌。服务返回 top-k 片段，由业务调用方决定如何构造 LLM Prompt，不在 RAG 服务里重复调用生成模型。
 - 计量和门禁：Embedding 服务按 tokens 使用独立用户/月额度及项目分配额度。RAG 知识库是单独服务订阅；写入和检索内部消耗的模型 token 记入 `embedding-v1`，避免再重复收取 RAG tokens。
 - 检索：首版使用 pgvector cosine distance 精确检索，知识规模和维度模式稳定后再按数据规模增加 HNSW/IVFFlat 索引并执行召回验证。

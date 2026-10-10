@@ -244,8 +244,8 @@
 
 ## A9 Embedding 与 RAG 首版
 
-- `embedding-v1` 提供 OpenAI 兼容 `POST /v1/embeddings`，管理员可维护多条上游连接、前缀路由、测试、优先级和故障切换；按独立 token 配额计量。
-- `rag-v1` 使用 PostgreSQL + pgvector 存储项目知识库、文本文档、切片、metadata 与向量；支持知识库创建/删除、文本写入/删除和 cosine top-k 检索。业务服务自行把检索片段交给 LLM。
+- `embedding-v1` 提供 OpenAI 兼容文本 `POST /v1/embeddings`；`volc/` 路由前缀额外适配豆包多模态文本、图片和视频输入，并规范化返回向量；按独立 token 配额计量。
+- `rag-v1` 使用 PostgreSQL + pgvector 保存项目隔离的向量记录；通用 `/v1/vector-stores` 支持预切片文本、图片/视频 URL、metadata 过滤、批量写入/删除和 cosine top-k 跨模态查询。旧 `/v1/rag/.../documents` 仍是文本文档接口。业务服务自行把检索结果交给 LLM。
 - 控制台已提供 Embedding API 管理页、项目详情 RAG 服务开通入口、RAG 知识库与检索测试页面。控制台使用登录态 API，无需粘贴项目 API Key；owner/editor 可写，viewer 只读。
 - 数据库迁移 `20261004_0038_embedding_rag` 创建 pgvector 扩展及业务表。迁移 SQL 编译通过；未在本轮执行数据库升级。当前向量检索是精确扫描，尚无 HNSW/IVFFlat 索引。
 - 完整后端测试有一项既有项目上下文集成测试因本地数据库尚未应用 `20261004_0039_context_data_no_auto_expiry` 失败；OpenAPI 契约已重新生成，需单独复跑。数据库升级前应确认目标是隔离测试库并运行 `uv run alembic upgrade head`。

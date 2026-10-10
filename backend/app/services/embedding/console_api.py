@@ -4,7 +4,7 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.application.api_keys import VerifiedApiKey
 from app.application.projects import ProjectForbiddenError, ProjectNotFoundError, ProjectService
@@ -34,6 +34,12 @@ class SearchConsoleResponse(BaseModel):
     knowledge_base_id: UUID
     model: str
     results: list[dict[str, object]]
+
+
+class StagedRecordsFetchRequest(BaseModel):
+    """管理接口按外部 ID 检查暂存记录。"""
+
+    ids: list[str] = Field(min_length=1, max_length=256)
 
 
 async def _actor(
@@ -184,6 +190,34 @@ async def update_knowledge_base_settings(
         )
         raise
     return KnowledgeBaseResponse.from_entity(item)
+
+
+@router.post("/knowledge-bases/{knowledge_base_id}/records/fetch-staged")
+async def fetch_staged_records(
+    project_id: UUID,
+    knowledge_base_id: UUID,
+    payload: StagedRecordsFetchRequest,
+    request: Request,
+    user: Annotated[User, Depends(get_current_user)],
+    projects: Annotated[ProjectService, Depends(get_project_service)],
+    service: Annotated[RagKnowledgeService, Depends(get_embedding_rag_service)],
+) -> dict[str, object]:
+    """仅项目 owner/editor 可读取暂存记录；普通项目 API Key 不可见。"""
+    actor = await _actor(project_id, user, projects, write=True)
+    try:
+        records, missing_ids = await service.fetch_records(
+            actor,
+            knowledge_base_id,
+            payload.ids,
+            include_staged=True,
+            trace_id=request.state.trace_id,
+        )
+    except RagError as error:
+        await _log_operation_failure(
+            service, actor, request, "vector_store.records.fetch_staged", error
+        )
+        raise _map_error(error) from error
+    return {"records": records, "missing_ids": missing_ids}
 
 
 @router.delete("/knowledge-bases/{knowledge_base_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -341,7 +375,10 @@ async def delete_vector(
     "/knowledge-bases/{knowledge_base_id}/vectors/{vector_id}",
     response_model=VectorResponse,
     summary="修改一条向量记录",
-    description="更新文本或 Metadata；文本变化时重新生成向量并计入 Embedding 用量。",
+    description=(
+        "更新文本或 Metadata；文本变化时重新生成向量并计入 Embedding 用量。"
+        "已发布或已退役版本不可编辑，返回 published_version_immutable。"
+    ),
 )
 async def update_vector(
     project_id: UUID,

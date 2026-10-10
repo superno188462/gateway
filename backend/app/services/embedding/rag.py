@@ -8,7 +8,7 @@ from typing import Literal, cast
 from uuid import UUID, uuid4
 
 from sqlalchemy import cast as sa_cast
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select, tuple_
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -64,7 +64,7 @@ class RagVectorInfo:
 
 @dataclass(frozen=True, slots=True)
 class RagVectorUpsert:
-    """一条调用方已切分好的记录，以及生成其向量所需的输入。"""
+    """一条外部记录及可选的 Embedding 输入；document 记录没有 Embedding 输入。"""
 
     external_id: str
     title: str
@@ -72,6 +72,12 @@ class RagVectorUpsert:
     metadata: dict[str, object]
     modality: str
     embedding_inputs: list[str | dict[str, object]]
+    record_kind: Literal["vector", "document"] = "vector"
+    parent_id: str | None = None
+    namespace: str | None = None
+    logical_document_id: str | None = None
+    version_id: str | None = None
+    staged: bool = False
 
 
 class RagKnowledgeService:
@@ -115,6 +121,216 @@ class RagKnowledgeService:
             base_id = base.id
         await self._operation(key, trace_id, "rag.knowledge_base.create", "创建 RAG 知识库")
         return await self.get_knowledge_base(key.project_id, base_id)
+
+    async def _validate_parent_records(
+        self, project_id: UUID, base_id: UUID, records: list[RagVectorUpsert]
+    ) -> None:
+        """在消耗 Embedding 额度前验证父记录存在且处于相同版本范围。"""
+        referenced_ids = {item.parent_id for item in records if item.parent_id}
+        if not referenced_ids:
+            return
+        async with self._session_factory() as session:
+            parents = await session.scalars(
+                select(RagDocument).where(
+                    RagDocument.knowledge_base_id == base_id,
+                    RagDocument.external_id.in_(referenced_ids),
+                )
+            )
+            parent_by_id = {item.external_id: item for item in parents}
+        for item in records:
+            if item.parent_id is None:
+                continue
+            parent = parent_by_id.get(item.parent_id)
+            if parent is None:
+                raise RagError(
+                    "parent_record_not_found", "父记录不存在或不属于当前 collection", 404
+                )
+            if parent.record_kind != "document":
+                raise RagError(
+                    "parent_record_kind_invalid", "parent_id 必须指向 document 普通记录", 409
+                )
+            if (
+                parent.namespace != item.namespace
+                or parent.logical_document_id != item.logical_document_id
+                or parent.is_published != (not item.staged)
+                or parent.version_id != item.version_id
+            ):
+                raise RagError(
+                    "parent_record_scope_conflict",
+                    "父子记录必须属于相同 namespace、document_id 和发布版本",
+                    409,
+                )
+            if parent.parent_external_id is not None:
+                raise RagError("nested_parent_unsupported", "第一版父记录必须是顶层 document", 422)
+
+    @staticmethod
+    def _ensure_version_editable(document: RagDocument) -> None:
+        """Reject writes to published or historically ambiguous versioned records."""
+        if document.version_id is None:
+            return
+        if document.was_published is True:
+            raise RagError(
+                "published_version_immutable",
+                "已发布版本不可修改；请使用新的 version_id 和外部 ID",
+                409,
+            )
+        if document.was_published is None and not document.is_published:
+            raise RagError(
+                "publication_history_unknown",
+                "旧隐藏版本无法判断是暂存还是已退役；请使用新的 version_id 和外部 ID 重建，"
+                "或由管理员核实后修复其发布状态",
+                409,
+            )
+
+    async def fetch_records(
+        self,
+        key: VerifiedApiKey,
+        base_id: UUID,
+        external_ids: list[str],
+        *,
+        include_staged: bool = False,
+        trace_id: str,
+    ) -> tuple[list[dict[str, object]], list[str]]:
+        """按 collection 外部 ID 批量返回正文；默认把暂存记录视为不存在。"""
+        await self.get_knowledge_base(key.project_id, base_id)
+        requested = list(dict.fromkeys(external_ids))
+        async with self._session_factory() as session:
+            statement = select(RagDocument).where(
+                RagDocument.knowledge_base_id == base_id,
+                RagDocument.external_id.in_(requested),
+            )
+            if not include_staged:
+                statement = statement.where(RagDocument.is_published.is_(True))
+            rows = await session.scalars(statement)
+            by_external_id = {row.external_id: row for row in rows}
+        records: list[dict[str, object]] = [
+            {
+                "id": external_id,
+                "record_kind": by_external_id[external_id].record_kind,
+                "parent_id": by_external_id[external_id].parent_external_id,
+                "content": by_external_id[external_id].content,
+                "metadata": by_external_id[external_id].metadata_json,
+                "modality": by_external_id[external_id].modality,
+            }
+            for external_id in requested
+            if external_id in by_external_id
+        ]
+        missing = [external_id for external_id in requested if external_id not in by_external_id]
+        await self._operation(
+            key,
+            trace_id,
+            "vector_store.records.fetch",
+            f"批量读取记录，返回 {len(records)} 条",
+        )
+        return records, missing
+
+    async def publish_version(
+        self,
+        key: VerifiedApiKey,
+        base_id: UUID,
+        *,
+        namespace: str,
+        logical_document_id: str,
+        version_id: str,
+        trace_id: str,
+    ) -> dict[str, object]:
+        """原子发布一组完整暂存记录，并让同一业务文档旧版本退出查询。"""
+        await self._require_enabled(key.project_id)
+        await self.get_knowledge_base(key.project_id, base_id)
+        scope = (
+            RagDocument.knowledge_base_id == base_id,
+            RagDocument.namespace == namespace,
+            RagDocument.logical_document_id == logical_document_id,
+        )
+        async with self._session_factory.begin() as session:
+            # 串行化同一 collection 内的版本发布，避免并发发布不同版本后同时可见。
+            collection_row = await session.scalar(
+                select(RagKnowledgeBase)
+                .where(
+                    RagKnowledgeBase.id == base_id,
+                    RagKnowledgeBase.project_id == key.project_id,
+                )
+                .with_for_update()
+            )
+            if collection_row is None:
+                raise RagError("knowledge_base_not_found", "向量集合不存在", 404)
+            target = list(
+                await session.scalars(
+                    select(RagDocument)
+                    .where(*scope, RagDocument.version_id == version_id)
+                    .with_for_update()
+                )
+            )
+            if not target:
+                raise RagError("staged_version_not_found", "指定版本不存在", 404)
+            already_published = all(record.is_published for record in target)
+            if not already_published and any(record.is_published for record in target):
+                raise RagError("version_state_invalid", "目标版本包含不一致的发布状态", 409)
+            if any(
+                not record.is_published and record.was_published is None for record in target
+            ):
+                raise RagError(
+                    "publication_history_unknown",
+                    "旧隐藏版本无法判断是暂存还是已退役；请使用新的 version_id 和外部 ID 重建，"
+                    "或由管理员核实后修复其发布状态",
+                    409,
+                )
+            if not already_published and any(record.was_published for record in target):
+                raise RagError(
+                    "published_version_retired",
+                    "已被新版本替代的历史版本不可重新发布；请写入新的 version_id",
+                    409,
+                )
+            if not already_published:
+                old_roots = await session.scalars(
+                    select(RagDocument)
+                    .where(
+                        *scope,
+                        RagDocument.is_published.is_(True),
+                        RagDocument.parent_external_id.is_(None),
+                    )
+                    .with_for_update()
+                )
+                for record in old_roots:
+                    record.is_published = False
+                await session.flush()
+                old_children = await session.scalars(
+                    select(RagDocument)
+                    .where(
+                        *scope,
+                        RagDocument.is_published.is_(True),
+                        RagDocument.parent_external_id.is_not(None),
+                    )
+                    .with_for_update()
+                )
+                for record in old_children:
+                    record.is_published = False
+                await session.flush()
+
+                new_roots = [record for record in target if record.parent_external_id is None]
+                new_children = [
+                    record for record in target if record.parent_external_id is not None
+                ]
+                for record in new_roots:
+                    record.is_published = True
+                    record.was_published = True
+                await session.flush()
+                for record in new_children:
+                    record.is_published = True
+                    record.was_published = True
+                await session.flush()
+            published_count = len(target)
+        await self._operation(
+            key,
+            trace_id,
+            "vector_store.version.publish",
+            f"发布文档版本 {version_id}，记录数 {published_count}",
+        )
+        return {
+            "version_id": version_id,
+            "published_records": published_count,
+            "already_published": already_published,
+        }
 
     async def update_knowledge_base_settings(
         self,
@@ -336,7 +552,7 @@ class RagKnowledgeService:
         *,
         trace_id: str,
     ) -> list[RagDocumentInfo]:
-        """批量生成向量并原子替换记录；文本记录合并为一次 Embedding 请求。"""
+        """批量写入普通正文与向量记录；Embedding 在 DB 替换前完成，记录变更单事务提交。"""
         await self._require_enabled(key.project_id)
         if not vectors:
             raise RagError("empty_upsert", "至少需要一条向量记录", 422)
@@ -344,9 +560,183 @@ class RagKnowledgeService:
         if len(external_ids) != len(set(external_ids)):
             raise RagError("duplicate_vector_id", "同一批次中的向量记录 ID 不能重复", 422)
         base = await self.get_knowledge_base(key.project_id, base_id)
+        version_keys = list(
+            dict.fromkeys(
+                (item.namespace, item.logical_document_id, item.version_id)
+                for item in vectors
+                if item.staged and item.namespace and item.logical_document_id and item.version_id
+            )
+        )
+        async with self._session_factory() as session:
+            existing_rows = await session.scalars(
+                select(RagDocument).where(
+                    RagDocument.knowledge_base_id == base_id,
+                    RagDocument.external_id.in_(external_ids),
+                )
+            )
+            existing_by_id = {item.external_id: item for item in existing_rows}
+            for item in vectors:
+                existing = existing_by_id.get(item.external_id)
+                if existing is not None:
+                    same_published_scope = (
+                        existing.was_published is True
+                        and existing.namespace == item.namespace
+                        and existing.logical_document_id == item.logical_document_id
+                        and existing.version_id == item.version_id
+                    )
+                    if same_published_scope:
+                        # The exact replay check decides whether this is a no-op or mutation.
+                        continue
+                    self._ensure_version_editable(existing)
+            existing_parent_ids = [
+                item.external_id
+                for item in vectors
+                if item.external_id in existing_by_id
+                and existing_by_id[item.external_id].record_kind == "document"
+            ]
+            existing_children: list[RagDocument] = (
+                list(
+                    await session.scalars(
+                        select(RagDocument).where(
+                            RagDocument.knowledge_base_id == base_id,
+                            RagDocument.parent_external_id.in_(existing_parent_ids),
+                        )
+                    )
+                )
+                if existing_parent_ids
+                else []
+            )
+            children_by_parent: dict[str, list[RagDocument]] = {}
+            for child in existing_children:
+                if child.parent_external_id:
+                    children_by_parent.setdefault(child.parent_external_id, []).append(child)
+            ambiguous_version_rows = (
+                list(
+                    await session.scalars(
+                        select(RagDocument).where(
+                            RagDocument.knowledge_base_id == base_id,
+                            RagDocument.is_published.is_(False),
+                            RagDocument.was_published.is_(None),
+                            tuple_(
+                                RagDocument.namespace,
+                                RagDocument.logical_document_id,
+                                RagDocument.version_id,
+                            ).in_(version_keys),
+                        )
+                    )
+                )
+                if version_keys
+                else []
+            )
+            if ambiguous_version_rows:
+                raise RagError(
+                    "publication_history_unknown",
+                    "该版本含迁移前状态不明的隐藏记录；请使用新的 version_id 和外部 ID 重建，"
+                    "或由管理员核实后修复其发布状态",
+                    409,
+                )
+            published_version_rows = (
+                list(
+                    await session.scalars(
+                        select(RagDocument).where(
+                            RagDocument.knowledge_base_id == base_id,
+                            RagDocument.was_published.is_(True),
+                            tuple_(
+                                RagDocument.namespace,
+                                RagDocument.logical_document_id,
+                                RagDocument.version_id,
+                            ).in_(version_keys),
+                        )
+                    )
+                )
+                if version_keys
+                else []
+            )
+        published_version_keys = {
+            (item.namespace, item.logical_document_id, item.version_id)
+            for item in published_version_rows
+        }
+        if published_version_keys:
+            if (
+                published_version_keys != set(version_keys)
+                or any(not item.staged or item.version_id is None for item in vectors)
+            ):
+                raise RagError(
+                    "published_version_immutable",
+                    "该批次混合了已发布版本或未版本记录；请按已发布版本原样重放，"
+                    "修改内容需使用新 version_id",
+                    409,
+                )
+            replayed: list[RagDocumentInfo] = []
+            for item in vectors:
+                document = existing_by_id.get(item.external_id)
+                if document is None or not self._same_published_record(document, item):
+                    raise RagError(
+                        "published_version_immutable",
+                        "已发布版本只允许完全相同的幂等重放；修改内容请使用新的 version_id",
+                        409,
+                    )
+                replayed.append(
+                    RagDocumentInfo(
+                        document.id,
+                        document.external_id,
+                        document.title,
+                        1 if document.record_kind == "vector" else 0,
+                        document.created_at,
+                    )
+                )
+            await self._operation(
+                key,
+                trace_id,
+                "rag.vector.upsert",
+                f"幂等重放已发布版本，记录数 {len(replayed)}",
+            )
+            return replayed
+        await self._validate_parent_records(key.project_id, base_id, vectors)
+        if any(
+            existing_by_id.get(item.external_id) is not None
+            and existing_by_id[item.external_id].record_kind != item.record_kind
+            for item in vectors
+        ):
+            raise RagError(
+                "record_kind_conflict",
+                "同一外部 ID 不能在 vector 与 document 类型之间转换",
+                409,
+            )
+        for item in vectors:
+            if item.record_kind != "document" or item.external_id not in children_by_parent:
+                continue
+            target_state = (
+                item.namespace,
+                item.logical_document_id,
+                item.version_id,
+                not item.staged,
+            )
+            if any(
+                (
+                    child.namespace,
+                    child.logical_document_id,
+                    child.version_id,
+                    child.is_published,
+                )
+                != target_state
+                for child in children_by_parent[item.external_id]
+            ):
+                raise RagError(
+                    "parent_record_in_use",
+                    "父记录已被子记录引用，不能直接改变其发布范围；请使用新版本 ID 并调用 publish",
+                    409,
+                )
 
         embeddings: list[list[float] | None] = [None] * len(vectors)
-        text_indexes = [index for index, item in enumerate(vectors) if item.modality == "text"]
+        vector_indexes = [
+            index for index, item in enumerate(vectors) if item.record_kind == "vector"
+        ]
+        text_indexes = [
+            index
+            for index, item in enumerate(vectors)
+            if item.record_kind == "vector" and item.modality == "text"
+        ]
         if text_indexes:
             response = await self._embedding_gateway.embed(
                 key,
@@ -359,7 +749,7 @@ class RagKnowledgeService:
 
         # 多模态组件在火山接口中共同组成一条向量；每条记录需独立请求。
         for index, item in enumerate(vectors):
-            if item.modality == "text":
+            if item.record_kind != "vector" or item.modality == "text":
                 continue
             response = await self._embedding_gateway.embed(
                 key,
@@ -370,11 +760,15 @@ class RagKnowledgeService:
             )
             self._assign_batch_embeddings(response, [index], embeddings)
 
-        resolved_embeddings = [vector for vector in embeddings if vector is not None]
-        if len(resolved_embeddings) != len(vectors):
+        resolved_embeddings = [embeddings[index] for index in vector_indexes]
+        if any(vector is None for vector in resolved_embeddings):
             raise RagError("embedding_response_invalid", "Embedding 响应缺少向量", 502)
-        dimensions = len(resolved_embeddings[0])
-        if any(len(vector) != dimensions for vector in resolved_embeddings):
+        first_embedding = resolved_embeddings[0] if resolved_embeddings else None
+        dimensions = len(first_embedding) if first_embedding is not None else None
+        concrete_embeddings = [vector for vector in resolved_embeddings if vector is not None]
+        if dimensions is not None and any(
+            len(vector) != dimensions for vector in concrete_embeddings
+        ):
             raise RagError("embedding_dimensions_invalid", "Embedding 向量维度不一致", 502)
 
         inserted_documents: list[RagDocument] = []
@@ -390,7 +784,28 @@ class RagKnowledgeService:
                 )
                 if locked_base is None:
                     raise RagError("knowledge_base_not_found", "向量集合不存在", 404)
-                if (
+                if version_keys:
+                    concurrent_published = await session.scalar(
+                        select(RagDocument.id)
+                        .where(
+                            RagDocument.knowledge_base_id == base_id,
+                            RagDocument.was_published.is_(True),
+                            tuple_(
+                                RagDocument.namespace,
+                                RagDocument.logical_document_id,
+                                RagDocument.version_id,
+                            ).in_(version_keys),
+                        )
+                        .limit(1)
+                    )
+                    if concurrent_published is not None:
+                        raise RagError(
+                            "published_version_immutable",
+                            "版本在本次写入期间已发布；请原样重试已存在记录，"
+                            "修改内容需使用新 version_id",
+                            409,
+                        )
+                if dimensions is not None and (
                     locked_base.vector_dimensions is not None
                     and locked_base.vector_dimensions != dimensions
                 ):
@@ -399,7 +814,8 @@ class RagKnowledgeService:
                         "该集合已有不同向量维度的数据，请使用原模型或新建集合",
                         409,
                     )
-                locked_base.vector_dimensions = dimensions
+                if dimensions is not None:
+                    locked_base.vector_dimensions = dimensions
 
                 existing_rows = await session.scalars(
                     select(RagDocument)
@@ -407,40 +823,86 @@ class RagKnowledgeService:
                         RagDocument.knowledge_base_id == base_id,
                         RagDocument.external_id.in_(external_ids),
                     )
+                    .order_by(RagDocument.external_id)
                     .with_for_update()
                 )
-                for document in existing_rows:
-                    await session.delete(document)
-                # 先删除旧记录并 flush，释放 (collection, external_id) 唯一键，
-                # 再在同一事务内插入新版本；失败时整批回滚，不会留下空档。
-                await session.flush()
+                existing_by_external_id = {
+                    document.external_id: document for document in existing_rows
+                }
+                if any(
+                    document.record_kind != item.record_kind
+                    for item in vectors
+                    if (document := existing_by_external_id.get(item.external_id)) is not None
+                ):
+                    raise RagError(
+                        "record_kind_conflict",
+                        "同一外部 ID 不能在 vector 与 document 类型之间转换",
+                        409,
+                    )
+                for item in vectors:
+                    document = existing_by_external_id.get(item.external_id)
+                    if document is not None:
+                        self._ensure_version_editable(document)
 
                 chunks: list[RagChunk] = []
-                for item, embedding in zip(vectors, resolved_embeddings, strict=True):
-                    document = RagDocument(
-                        id=uuid4(),
-                        knowledge_base_id=base_id,
-                        external_id=item.external_id,
-                        title=item.title,
-                        content=item.content,
-                        metadata_json=item.metadata,
-                        created_by=key.user_id or key.owner_id,
+                for index, item in enumerate(vectors):
+                    document = existing_by_external_id.get(item.external_id)
+                    is_new_document = document is None
+                    same_version_scope = (
+                        not is_new_document
+                        and document is not None
+                        and document.namespace == item.namespace
+                        and document.logical_document_id == item.logical_document_id
+                        and document.version_id == item.version_id
                     )
-                    inserted_documents.append(document)
-                    chunks.append(
-                        RagChunk(
+                    if is_new_document:
+                        document = RagDocument(
+                            id=uuid4(),
                             knowledge_base_id=base_id,
-                            document_id=document.id,
-                            sequence=0,
-                            content=item.content,
-                            embedding=embedding,
-                            embedding_model=base.embedding_model,
-                            dimensions=dimensions,
-                            modality=item.modality,
-                            metadata_json=item.metadata,
+                            external_id=item.external_id,
+                            record_kind=item.record_kind,
+                            created_by=key.user_id or key.owner_id,
+                            was_published=not item.staged,
                         )
-                    )
-                session.add_all(inserted_documents)
+                        session.add(document)
+                    else:
+                        assert document is not None
+                        await session.execute(
+                            delete(RagChunk).where(RagChunk.document_id == document.id)
+                        )
+                    assert document is not None
+                    document.record_kind = item.record_kind
+                    document.parent_external_id = item.parent_id
+                    document.namespace = item.namespace
+                    document.logical_document_id = item.logical_document_id
+                    document.version_id = item.version_id
+                    document.is_published = not item.staged
+                    if not same_version_scope:
+                        document.was_published = not item.staged
+                    else:
+                        document.was_published = document.was_published or not item.staged
+                    document.modality = item.modality
+                    document.title = item.title
+                    document.content = item.content
+                    document.metadata_json = item.metadata
+                    document.updated_at = datetime.now(UTC)
+                    inserted_documents.append(document)
+                    embedding = embeddings[index]
+                    if item.record_kind == "vector":
+                        assert embedding is not None and dimensions is not None
+                        chunks.append(
+                            RagChunk(
+                                knowledge_base_id=base_id,
+                                document_id=document.id,
+                                sequence=0,
+                                content=item.content,
+                                embedding=embedding,
+                                embedding_model=base.embedding_model,
+                                dimensions=dimensions,
+                                modality=item.modality,
+                                metadata_json=item.metadata,
+                            )
+                        )
                 await session.flush()
                 session.add_all(chunks)
                 await session.flush()
@@ -451,18 +913,34 @@ class RagKnowledgeService:
             key,
             trace_id,
             "rag.vector.upsert",
-            f"批量写入向量记录，数量 {len(inserted_documents)}",
+            f"批量写入记录，数量 {len(inserted_documents)}",
         )
         return [
             RagDocumentInfo(
                 document.id,
                 document.external_id,
                 document.title,
-                1,
+                1 if document.record_kind == "vector" else 0,
                 document.created_at,
             )
             for document in inserted_documents
         ]
+
+    @staticmethod
+    def _same_published_record(document: RagDocument, item: RagVectorUpsert) -> bool:
+        """已发布版本只接受精确重放，避免稳定 ID 被重试请求重新隐藏或覆盖。"""
+        return (
+            document.was_published is True
+            and document.record_kind == item.record_kind
+            and document.parent_external_id == item.parent_id
+            and document.namespace == item.namespace
+            and document.logical_document_id == item.logical_document_id
+            and document.version_id == item.version_id
+            and document.modality == item.modality
+            and document.title == item.title
+            and document.content == item.content
+            and document.metadata_json == item.metadata
+        )
 
     @staticmethod
     def _assign_batch_embeddings(
@@ -585,6 +1063,7 @@ class RagKnowledgeService:
         if current_row is None:
             raise RagError("vector_not_found", "向量记录不存在", 404)
         current_chunk, current_document = current_row
+        self._ensure_version_editable(current_document)
         current_content = current_chunk.content
         current_modality = current_chunk.modality
         if current_modality == "text" and len(normalized_content) > base.chunk_size:
@@ -628,9 +1107,7 @@ class RagKnowledgeService:
             else:
                 assert updated_media_url is not None
                 media_type = "image_url" if current_modality == "image" else "video_url"
-                embedding_inputs = [
-                    {"type": media_type, media_type: {"url": updated_media_url}}
-                ]
+                embedding_inputs = [{"type": media_type, media_type: {"url": updated_media_url}}]
                 if normalized_content != updated_media_url:
                     embedding_inputs.append({"type": "text", "text": normalized_content})
             response = await self._embedding_gateway.embed(
@@ -658,13 +1135,23 @@ class RagKnowledgeService:
                 )
 
         async with self._session_factory.begin() as session:
+            document = await session.scalar(
+                select(RagDocument)
+                .where(
+                    RagDocument.id == source_document_id,
+                    RagDocument.knowledge_base_id == base_id,
+                )
+                .with_for_update()
+            )
+            if document is None:
+                raise RagError("vector_not_found", "向量记录不存在", 404)
+            self._ensure_version_editable(document)
             vector = await session.scalar(
                 select(RagChunk)
-                .join(RagKnowledgeBase)
                 .where(
                     RagChunk.id == vector_id,
+                    RagChunk.document_id == document.id,
                     RagChunk.knowledge_base_id == base_id,
-                    RagKnowledgeBase.project_id == key.project_id,
                 )
                 .with_for_update()
             )
@@ -674,7 +1161,19 @@ class RagKnowledgeService:
             vector.metadata_json = metadata
             if embedding is not None:
                 vector.embedding = embedding
-            vector.updated_at = datetime.now(UTC)
+            updated_at = datetime.now(UTC)
+            vector.updated_at = updated_at
+            chunk_count = await session.scalar(
+                select(func.count())
+                .select_from(RagChunk)
+                .where(RagChunk.document_id == vector.document_id)
+            )
+            if document is not None and document.external_id is not None and chunk_count == 1:
+                # Generic external-ID records have one chunk, so fetch and query must agree.
+                # Legacy document-level records with multiple chunks keep their full body intact.
+                document.content = normalized_content
+                document.metadata_json = metadata
+                document.updated_at = updated_at
             await session.flush()
             result = RagVectorInfo(
                 vector.id,
@@ -698,19 +1197,38 @@ class RagKnowledgeService:
         """删除一条切片向量；若它是文档最后一片，同时删除其文档外壳。"""
         await self._require_enabled(key.project_id)
         async with self._session_factory.begin() as session:
-            vector = await session.scalar(
-                select(RagChunk)
+            document_id = await session.scalar(
+                select(RagChunk.document_id)
                 .join(RagKnowledgeBase)
                 .where(
                     RagChunk.id == vector_id,
                     RagChunk.knowledge_base_id == base_id,
                     RagKnowledgeBase.project_id == key.project_id,
                 )
+            )
+            if document_id is None:
+                raise RagError("vector_not_found", "向量记录不存在", 404)
+            document = await session.scalar(
+                select(RagDocument)
+                .where(
+                    RagDocument.id == document_id,
+                    RagDocument.knowledge_base_id == base_id,
+                )
+                .with_for_update()
+            )
+            if document is None:
+                raise RagError("vector_not_found", "向量记录不存在", 404)
+            vector = await session.scalar(
+                select(RagChunk)
+                .where(
+                    RagChunk.id == vector_id,
+                    RagChunk.document_id == document.id,
+                    RagChunk.knowledge_base_id == base_id,
+                )
                 .with_for_update()
             )
             if vector is None:
                 raise RagError("vector_not_found", "向量记录不存在", 404)
-            document_id = vector.document_id
             await session.delete(vector)
             await session.flush()
             remaining = await session.scalar(
@@ -719,9 +1237,7 @@ class RagKnowledgeService:
                 .where(RagChunk.document_id == document_id)
             )
             if remaining == 0:
-                document = await session.get(RagDocument, document_id)
-                if document is not None:
-                    await session.delete(document)
+                await session.delete(document)
         await self._operation(key, trace_id, "rag.vector.delete", "删除单条向量记录")
 
     async def delete_document(
@@ -743,6 +1259,72 @@ class RagKnowledgeService:
                 raise RagError("document_not_found", "文档不存在", 404)
             await session.delete(document)
         await self._operation(key, trace_id, "rag.document.delete", "删除 RAG 文档")
+
+    async def delete_records(
+        self,
+        key: VerifiedApiKey,
+        base_id: UUID,
+        external_ids: list[str],
+        trace_id: str,
+    ) -> dict[str, object]:
+        """幂等批量删除外部记录；被未选子记录引用的父记录返回 409。"""
+        await self._require_enabled(key.project_id)
+        requested = list(dict.fromkeys(external_ids))
+        if not requested:
+            raise RagError("empty_delete", "至少需要一个记录 ID", 422)
+        async with self._session_factory.begin() as session:
+            records = list(
+                await session.scalars(
+                    select(RagDocument)
+                    .where(
+                        RagDocument.knowledge_base_id == base_id,
+                        RagDocument.external_id.in_(requested),
+                    )
+                    .order_by(RagDocument.external_id)
+                    .with_for_update()
+                )
+            )
+            found_ids: set[str] = {
+                record.external_id for record in records if record.external_id is not None
+            }
+            referenced: list[str | None] = (
+                list(
+                    await session.scalars(
+                        select(RagDocument.external_id).where(
+                            RagDocument.knowledge_base_id == base_id,
+                            RagDocument.parent_external_id.in_(found_ids),
+                            RagDocument.external_id.not_in(found_ids),
+                        )
+                    )
+                )
+                if found_ids
+                else []
+            )
+            if list(referenced):
+                raise RagError(
+                    "parent_record_in_use",
+                    "父记录仍被未同时删除的子记录引用",
+                    409,
+                )
+            child_records = [record for record in records if record.parent_external_id is not None]
+            parent_records = [record for record in records if record.parent_external_id is None]
+            for record in child_records:
+                await session.delete(record)
+            await session.flush()
+            for record in parent_records:
+                await session.delete(record)
+            await session.flush()
+            deleted_ids = [record.external_id for record in records if record.external_id]
+        await self._operation(
+            key,
+            trace_id,
+            "vector_store.records.delete",
+            f"批量删除记录，数量 {len(deleted_ids)}",
+        )
+        return {
+            "deleted_ids": deleted_ids,
+            "missing_ids": [item for item in requested if item not in found_ids],
+        }
 
     async def search(
         self,
@@ -777,12 +1359,15 @@ class RagKnowledgeService:
                 select(
                     RagChunk,
                     RagDocument.title,
+                    RagDocument.external_id,
+                    RagDocument.parent_external_id,
                     RagChunk.embedding.cosine_distance(vector).label("distance"),
                 )
                 .join(RagDocument, RagDocument.id == RagChunk.document_id)
                 .where(
                     RagChunk.knowledge_base_id == base_id,
                     RagChunk.dimensions == len(vector),
+                    RagDocument.is_published.is_(True),
                 )
             )
             if metadata_filter:
@@ -794,10 +1379,15 @@ class RagKnowledgeService:
             )
             results: list[dict[str, object]] = []
             for row in rows.all():
-                chunk, title, distance = cast(tuple[RagChunk, str, float], row)
+                chunk, title, chunk_doc_external_id, parent_id, distance = cast(
+                    tuple[RagChunk, str, str | None, str | None, float], row
+                )
                 results.append(
                     {
                         "chunk_id": str(chunk.id),
+                        "id": chunk_doc_external_id,
+                        "record_kind": "vector",
+                        "parent_id": parent_id,
                         "document_id": str(chunk.document_id),
                         "title": title,
                         "content": chunk.content,

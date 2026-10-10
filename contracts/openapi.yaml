@@ -1303,7 +1303,7 @@ paths:
     post:
       tags:
       - Embedding Gateway
-      summary: 创建文本嵌入向量
+      summary: 创建文本或多模态嵌入向量
       description: 以项目 API Key 鉴权，遵循 OpenAI Embeddings 响应结构并记录 token 用量。
       operationId: create_embeddings_v1_embeddings_post
       requestBody:
@@ -1713,8 +1713,14 @@ paths:
     post:
       tags:
       - Vector Database
-      summary: 批量写入已切分的向量记录
-      description: 文本 vectors 项必须是调用方预先切好的单条文本片段，媒体项以一条 HTTPS URL 为单位。网关不会再次切片；同批文本会合并为一次网关批量 Embedding 请求，再在一个数据库事务中写入；每项保存自己的 metadata。标准 OpenAI 兼容上游使用单次批接口；火山多模态上游按单向量语义最多并发 8 路请求。文本长度不能超过集合 chunk_size。旧客户端仍可使用 documents 作为字段名。
+      summary: 批量写入普通记录和向量记录
+      description: vectors 每批最多 64 条、请求体最多 4 MiB。record_kind=vector 对预切片文本或媒体生成 Embedding；record_kind=document
+        只存正文和 metadata，正文最多 20,000 个 Unicode 码位并跳过 Embedding。向量文本不超过 collection.chunk_size。ID
+        在项目+collection 内唯一，同类型重复提交幂等替换；vector/document 类型不可互转。父记录须先单独写入，且必须是同项目、同
+        collection 的 document。Embedding 成功后，记录在一个数据库事务中替换；外部 Embedding 用量不可随事务回滚。提供
+        namespace、document_id、version_id 时必须设 staged=true，并调用 publish 后才可见。响应 id 保留为内部
+        UUID；external_id 才是调用方 ID，后续 fetch、delete 和 parent_id 均使用它。省略 record_kind
+        时默认为 vector，旧客户端也可继续传 documents 字段。
       operationId: upsert_vectors_v1_vector_stores_collections__collection__upsert_post
       security:
       - HTTPBearer: []
@@ -1740,6 +1746,84 @@ paths:
                 type: object
                 additionalProperties: true
                 title: Response Upsert Vectors V1 Vector Stores Collections  Collection  Upsert
+                  Post
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /v1/vector-stores/collections/{collection}/fetch:
+    post:
+      tags:
+      - Vector Database
+      summary: 按外部 ID 批量读取记录
+      description: 精确读取已发布的 vector/document 正文和 metadata；不返回 embedding、不调用 Embedding。最多
+        256 个 ID，去重后按首次出现顺序返回。暂存记录与不存在的 ID 一样列入 missing_ids。
+      operationId: fetch_collection_records_v1_vector_stores_collections__collection__fetch_post
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: collection
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Collection
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FetchRequest'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+                title: Response Fetch Collection Records V1 Vector Stores Collections  Collection  Fetch
+                  Post
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /v1/vector-stores/collections/{collection}/publish:
+    post:
+      tags:
+      - Vector Database
+      summary: 原子发布暂存版本
+      description: 在项目 API Key 所属项目和 collection 内，按 namespace、document_id 发布指定 version_id。目标版本的暂存记录在一个数据库事务中启用，旧版本退出
+        query/fetch；之后可另行清理旧记录。
+      operationId: publish_collection_version_v1_vector_stores_collections__collection__publish_post
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: collection
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Collection
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PublishVersionRequest'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+                title: Response Publish Collection Version V1 Vector Stores Collections  Collection  Publish
                   Post
         '422':
           description: Validation Error
@@ -1991,6 +2075,52 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+  /api/v1/rag/projects/{project_id}/knowledge-bases/{knowledge_base_id}/records/fetch-staged:
+    post:
+      tags:
+      - RAG Console
+      summary: Fetch Staged Records
+      description: 仅项目 owner/editor 可读取暂存记录；普通项目 API Key 不可见。
+      operationId: fetch_staged_records_api_v1_rag_projects__project_id__knowledge_bases__knowledge_base_id__records_fetch_staged_post
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: project_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Project Id
+      - name: knowledge_base_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Knowledge Base Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StagedRecordsFetchRequest'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+                title: Response Fetch Staged Records Api V1 Rag Projects  Project
+                  Id  Knowledge Bases  Knowledge Base Id  Records Fetch Staged Post
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
   /api/v1/rag/projects/{project_id}/knowledge-bases/{knowledge_base_id}/documents:
     get:
       tags:
@@ -2196,7 +2326,7 @@ paths:
       tags:
       - RAG Console
       summary: 修改一条向量记录
-      description: 更新文本或 Metadata；文本变化时重新生成向量并计入 Embedding 用量。
+      description: 更新文本或 Metadata；文本变化时重新生成向量并计入 Embedding 用量。已发布或已退役版本不可编辑，返回 published_version_immutable。
       operationId: update_vector_api_v1_rag_projects__project_id__knowledge_bases__knowledge_base_id__vectors__vector_id__patch
       security:
       - HTTPBearer: []
@@ -4883,10 +5013,21 @@ components:
           anyOf:
           - type: string
           - items:
-              type: string
+              anyOf:
+              - type: string
+              - oneOf:
+                - $ref: '#/components/schemas/TextEmbeddingInput'
+                - $ref: '#/components/schemas/ImageEmbeddingInput'
+                - $ref: '#/components/schemas/VideoEmbeddingInput'
+                discriminator:
+                  propertyName: type
+                  mapping:
+                    image_url: '#/components/schemas/ImageEmbeddingInput'
+                    text: '#/components/schemas/TextEmbeddingInput'
+                    video_url: '#/components/schemas/VideoEmbeddingInput'
             type: array
           title: Input
-          description: 单段文本或文本数组；图像和视频由后续模态适配器支持。
+          description: 文本可传字符串或字符串数组；火山多模态模型传结构化对象数组，每个请求生成一个向量。
         encoding_format:
           type: string
           title: Encoding Format
@@ -4910,7 +5051,7 @@ components:
       - model
       - input
       title: EmbeddingRequest
-      description: OpenAI embeddings.create 请求的首发子集（纯文本输入）。
+      description: OpenAI 文本输入及网关约定的多模态输入。
     ErrorResponse:
       properties:
         code:
@@ -4932,6 +5073,20 @@ components:
       - request_id
       title: ErrorResponse
       description: 不暴露底层异常的公共错误响应。
+    FetchRequest:
+      properties:
+        ids:
+          items:
+            type: string
+          type: array
+          maxItems: 256
+          minItems: 1
+          title: Ids
+      type: object
+      required:
+      - ids
+      title: FetchRequest
+      description: 按外部 ID 批量读取已发布的普通或向量记录，不返回 embedding。
     HTTPValidationError:
       properties:
         detail:
@@ -4953,6 +5108,32 @@ components:
       - status
       title: HealthResponse
       description: 健康检查成功响应。
+    ImageEmbeddingInput:
+      properties:
+        type:
+          type: string
+          const: image_url
+          title: Type
+        image_url:
+          $ref: '#/components/schemas/ImageUrl'
+      additionalProperties: false
+      type: object
+      required:
+      - type
+      - image_url
+      title: ImageEmbeddingInput
+    ImageUrl:
+      properties:
+        url:
+          type: string
+          maxLength: 8000
+          minLength: 1
+          title: Url
+      additionalProperties: false
+      type: object
+      required:
+      - url
+      title: ImageUrl
     KnowledgeBaseCreateRequest:
       properties:
         name:
@@ -5626,10 +5807,47 @@ components:
       required:
       - groups
       title: PublicProviderCatalogResponse
+    PublishVersionRequest:
+      properties:
+        namespace:
+          type: string
+          maxLength: 200
+          minLength: 1
+          title: Namespace
+        document_id:
+          type: string
+          maxLength: 200
+          minLength: 1
+          title: Document Id
+        version_id:
+          type: string
+          maxLength: 200
+          minLength: 1
+          title: Version Id
+      type: object
+      required:
+      - namespace
+      - document_id
+      - version_id
+      title: PublishVersionRequest
+      description: 原子启用一个暂存版本，并停用指定业务文档旧版本。
     QueryRequest:
       properties:
         query:
-          type: string
+          anyOf:
+          - type: string
+          - items:
+              oneOf:
+              - $ref: '#/components/schemas/TextEmbeddingInput'
+              - $ref: '#/components/schemas/ImageEmbeddingInput'
+              - $ref: '#/components/schemas/VideoEmbeddingInput'
+              discriminator:
+                propertyName: type
+                mapping:
+                  image_url: '#/components/schemas/ImageEmbeddingInput'
+                  text: '#/components/schemas/TextEmbeddingInput'
+                  video_url: '#/components/schemas/VideoEmbeddingInput'
+            type: array
           maxLength: 10000
           minLength: 1
           title: Query
@@ -6471,6 +6689,20 @@ components:
       required:
       - monthly_token_limit
       title: SetUserServiceQuotaRequest
+    StagedRecordsFetchRequest:
+      properties:
+        ids:
+          items:
+            type: string
+          type: array
+          maxItems: 256
+          minItems: 1
+          title: Ids
+      type: object
+      required:
+      - ids
+      title: StagedRecordsFetchRequest
+      description: 管理接口按外部 ID 检查暂存记录。
     StreamOptionsRequest:
       properties:
         include_usage:
@@ -6628,6 +6860,23 @@ components:
       - content
       title: TemplateWrite
       description: 通过项目 API Key 创建项目提示词模板。
+    TextEmbeddingInput:
+      properties:
+        type:
+          type: string
+          const: text
+          title: Type
+        text:
+          type: string
+          maxLength: 100000
+          minLength: 1
+          title: Text
+      additionalProperties: false
+      type: object
+      required:
+      - type
+      - text
+      title: TextEmbeddingInput
     TokenResponse:
       properties:
         access_token:
@@ -6656,12 +6905,13 @@ components:
           maxItems: 64
           minItems: 1
           title: Vectors
-          description: 1–64 条调用方已切分好的记录，每项生成一条向量并使用自己的 metadata。同批文本统一批量 Embedding；为兼容旧客户端也接受 documents 字段。
+          description: 1–64 条记录。record_kind=vector 每项生成向量；document 只存正文，不调用 Embedding。同批文本统一批量
+            Embedding；为兼容旧客户端也接受 documents 字段。
       type: object
       required:
       - vectors
       title: UpsertRequest
-      description: 批量写入已切分记录；每个输入项恰好生成一条向量。
+      description: 批量写入向量记录和普通正文记录；不负责文档切片。
     UserResponse:
       properties:
         id:
@@ -6767,12 +7017,78 @@ components:
           minLength: 1
           title: Id
           description: 调用方提供的稳定记录 ID。
-        content:
+        record_kind:
           type: string
-          maxLength: 6000
-          minLength: 1
+          enum:
+          - vector
+          - document
+          title: Record Kind
+          description: vector 生成向量；document 只保存正文和 metadata。
+          default: vector
+        parent_id:
+          anyOf:
+          - type: string
+            maxLength: 200
+            minLength: 1
+          - type: 'null'
+          title: Parent Id
+          description: 同项目、同 collection 下 document 记录的外部 ID；先写父记录再写子记录。
+        namespace:
+          anyOf:
+          - type: string
+            maxLength: 200
+            minLength: 1
+          - type: 'null'
+          title: Namespace
+        document_id:
+          anyOf:
+          - type: string
+            maxLength: 200
+            minLength: 1
+          - type: 'null'
+          title: Document Id
+        version_id:
+          anyOf:
+          - type: string
+            maxLength: 200
+            minLength: 1
+          - type: 'null'
+          title: Version Id
+        staged:
+          type: boolean
+          title: Staged
+          description: 暂存版本不参与普通 query/fetch；发布时需提供 namespace、document_id 和 version_id。
+          default: false
+        modality:
+          type: string
+          enum:
+          - text
+          - image
+          - video
+          title: Modality
+          default: text
+        content:
+          anyOf:
+          - type: string
+            maxLength: 20000
+          - type: 'null'
           title: Content
-          description: 调用方已切分好的单条文本片段；不得超过集合的 chunk_size。
+          description: 正文；vector 文本受 collection.chunk_size 限制，document 最多 20,000 个
+            Unicode 字符。
+        media_url:
+          anyOf:
+          - type: string
+            maxLength: 8000
+          - type: 'null'
+          title: Media Url
+          description: 图像或视频的可访问 HTTPS URL；原文件由调用方或对象存储管理。
+        video_options:
+          anyOf:
+          - additionalProperties: true
+            type: object
+          - type: 'null'
+          title: Video Options
+          description: 可选视频抽帧参数，受豆包版本和火山方舟参数范围约束。
         metadata:
           additionalProperties: true
           type: object
@@ -6788,9 +7104,8 @@ components:
       type: object
       required:
       - id
-      - content
       title: VectorDocument
-      description: 一条调用方已完成切分的向量记录，不代表完整原始文档。
+      description: 一条外部记录；vector 会嵌入，document 仅保存正文。
     VectorResponse:
       properties:
         id:
@@ -6817,6 +7132,10 @@ components:
           type: string
           title: Content
           description: 该条向量对应的文本切片，不包含向量数组。
+        modality:
+          type: string
+          title: Modality
+          description: 记录模态：text、image 或 video。
         metadata:
           additionalProperties: true
           type: object
@@ -6846,6 +7165,7 @@ components:
       - external_id
       - title
       - content
+      - modality
       - metadata
       - sequence
       - created_by_user_id
@@ -6872,6 +7192,67 @@ components:
       - metadata
       title: VectorUpdateRequest
       description: 可编辑字段；正文变化会重新计算 Embedding 并计入用量。
+    VideoEmbeddingInput:
+      properties:
+        type:
+          type: string
+          const: video_url
+          title: Type
+        video_url:
+          $ref: '#/components/schemas/VideoUrl'
+      additionalProperties: false
+      type: object
+      required:
+      - type
+      - video_url
+      title: VideoEmbeddingInput
+    VideoUrl:
+      properties:
+        url:
+          type: string
+          maxLength: 8000
+          minLength: 1
+          title: Url
+        fps:
+          anyOf:
+          - type: number
+            maximum: 5.0
+            minimum: 0.2
+          - type: 'null'
+          title: Fps
+        max_frame_tokens:
+          anyOf:
+          - type: integer
+            maximum: 640.0
+            minimum: 128.0
+          - type: 'null'
+          title: Max Frame Tokens
+        max_video_tokens:
+          anyOf:
+          - type: integer
+            maximum: 204800.0
+            minimum: 10240.0
+          - type: 'null'
+          title: Max Video Tokens
+        min_frame_tokens:
+          anyOf:
+          - type: integer
+            maximum: 128.0
+            minimum: 16.0
+          - type: 'null'
+          title: Min Frame Tokens
+        min_frames:
+          anyOf:
+          - type: integer
+            maximum: 16.0
+            minimum: 5.0
+          - type: 'null'
+          title: Min Frames
+      additionalProperties: false
+      type: object
+      required:
+      - url
+      title: VideoUrl
     app__services__asr__admin_api__ProviderResponse:
       properties:
         id:

@@ -9,9 +9,11 @@ from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     JSON,
     BigInteger,
+    Boolean,
     CheckConstraint,
     DateTime,
     ForeignKey,
+    ForeignKeyConstraint,
     Identity,
     Index,
     Integer,
@@ -677,12 +679,46 @@ class RagKnowledgeBase(Base):
 
 
 class RagDocument(Base):
-    """知识库中的一个逻辑文档；当前首发支持文本内容。"""
+    """Collection 中保存的外部记录正文；向量和普通记录共用此记录外壳。"""
 
     __tablename__ = "rag_documents"
     __table_args__ = (
         UniqueConstraint("knowledge_base_id", "external_id", name="uq_rag_documents_external_id"),
+        CheckConstraint(
+            "record_kind IN ('vector', 'document')", name="ck_rag_documents_record_kind"
+        ),
+        CheckConstraint(
+            "parent_external_id IS NULL OR record_kind = 'vector'",
+            name="ck_rag_documents_child_is_vector",
+        ),
+        CheckConstraint(
+            "(version_id IS NULL AND "
+            "((namespace IS NULL AND logical_document_id IS NULL) OR "
+            "(namespace IS NOT NULL AND logical_document_id IS NOT NULL))) OR "
+            "(version_id IS NOT NULL AND namespace IS NOT NULL "
+            "AND logical_document_id IS NOT NULL)",
+            name="ck_rag_documents_version_scope",
+        ),
+        ForeignKeyConstraint(
+            ["knowledge_base_id", "parent_external_id"],
+            ["rag_documents.knowledge_base_id", "rag_documents.external_id"],
+            ondelete="RESTRICT",
+            name="fk_rag_documents_parent_external_id",
+        ),
         Index("ix_rag_documents_kb_created", "knowledge_base_id", "created_at"),
+        Index(
+            "ix_rag_documents_parent_reference",
+            "knowledge_base_id",
+            "parent_external_id",
+        ),
+        Index(
+            "ix_rag_documents_publication_scope",
+            "knowledge_base_id",
+            "namespace",
+            "logical_document_id",
+            "version_id",
+            "is_published",
+        ),
     )
 
     id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), primary_key=True, default=uuid4)
@@ -692,6 +728,14 @@ class RagDocument(Base):
         nullable=False,
     )
     external_id: Mapped[str | None] = mapped_column(String(200))
+    record_kind: Mapped[str] = mapped_column(String(20), nullable=False, server_default="vector")
+    parent_external_id: Mapped[str | None] = mapped_column(String(200))
+    namespace: Mapped[str | None] = mapped_column(String(200))
+    logical_document_id: Mapped[str | None] = mapped_column(String(200))
+    version_id: Mapped[str | None] = mapped_column(String(200))
+    is_published: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")
+    was_published: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    modality: Mapped[str] = mapped_column(String(20), nullable=False, server_default="text")
     title: Mapped[str] = mapped_column(String(500), nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
     metadata_json: Mapped[dict[str, object]] = mapped_column(JSON, nullable=False, default=dict)
@@ -707,7 +751,7 @@ class RagDocument(Base):
 
 
 class RagChunk(Base):
-    """pgvector 中保存的单条文本、图片或视频向量记录。"""
+    """pgvector 中保存的向量数据；普通 document 记录不创建此行。"""
 
     __tablename__ = "rag_chunks"
     __table_args__ = (
